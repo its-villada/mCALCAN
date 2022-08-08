@@ -22,6 +22,11 @@ char Version[] = "v2.5 - 27/05/2022";
 
 #define LORA_CODING_RATE 5
 
+#define DATA_TIME 500
+
+
+int missionTime = 0;
+
 void setup()
 {
   // Set Led onboard con Output
@@ -41,7 +46,7 @@ void setup()
   while (!LoRa.begin(LORA_FREQUENCY))
   {
     Serial.println(".");
-    delay(500);
+    delay(DATA_TIME);
   }
   // Change sync word (0xF3) to match the receiver
   // The sync word assures you don't get LoRa messages from other LoRa transceivers
@@ -58,13 +63,22 @@ void setup()
 
 void loop()
 {
-  // Packet Number: 530
-  // Presion Base: 1014.66
-  // Presion Absoluta: 1014.56
-  // Altura: 0.81
-  // Temperatura: 22.15
-  // =====================================================================
-  // Trato de parsear el paquete
+  // los datos deben imprimirse en el siguiente orden para 
+  // ser interpretados por la estación terrena
+  // 0 - tiempo mision (ms)
+  // 1 - altitud (m)
+  // 2 - caída libre (1,0)
+  // 3 - temperatura (°C)
+  // 4 - presión 
+  // 5 - giro
+  // 6 - giro 
+  // 7 - giro 
+  // 8 - velocidad (m/s)
+  // 9 - velocidad (m/s)
+  // 10 - velocidad (m/s)
+  // 11 - nivel de batería 
+
+// Trato de parsear el paquete
   int packetSize = LoRa.parsePacket();
   if (packetSize)
   {
@@ -87,6 +101,9 @@ void loop()
       String strconf2 = LoRaData.substring(indicador5 + 1, confirmacion2);
 
       if (strconf1 == "1234" && strconf2 == "4321") { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo y fin
+          missionTime = missionTime + DATA_TIME;
+          String time;
+          time = String(missionTime);
 //        String pktNumber = LoRaData.substring(confirmacion1 + 1, indicador1);
 //        Serial.print("Packet Number: ");
 //        Serial.println(pktNumber);
@@ -107,7 +124,7 @@ void loop()
 //        Serial.print("Temperatura: ");
 //        Serial.println(temperatura);
 //
-        Serial.println("0,55,1,20,4,2,19,7,16,10,8");
+        Serial.println(time + ",55,1,20,4,2,19,7,16,10,8");
         // Apagar LED onboard
         digitalWrite(LED, LOW);
       }
