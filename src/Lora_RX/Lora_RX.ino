@@ -101,9 +101,17 @@ void loop()
       String strconf2 = LoRaData.substring(indicador5 + 1, confirmacion2);
 
       if (strconf1 == "1234" && strconf2 == "4321") { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo y fin
+          // tiempo de la misión 
           missionTime = missionTime + DATA_TIME;
           String time;
           time = String(missionTime);
+
+          // presión  
+          String presionBase = LoRaData.substring(indicador1 + 1, indicador2);
+
+          // temperatura 
+          String temperatura = LoRaData.substring(indicador4 + 1, indicador5);
+
 //        String pktNumber = LoRaData.substring(confirmacion1 + 1, indicador1);
 //        Serial.print("Packet Number: ");
 //        Serial.println(pktNumber);
@@ -124,7 +132,7 @@ void loop()
 //        Serial.print("Temperatura: ");
 //        Serial.println(temperatura);
 //
-        Serial.println(time + ",55,1,20,4,2,19,7,16,10,8");
+        Serial.println(time + ",55,1," + temperatura + "," + presionBase + ",2,19,7,16,10,8");
         // Apagar LED onboard
         digitalWrite(LED, LOW);
       }
