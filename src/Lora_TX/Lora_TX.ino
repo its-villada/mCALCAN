@@ -36,8 +36,7 @@ void TimerHandler()
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  pinMode(LED_BUILTIN,  OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
+  pinMode(LED_BUILTIN,  OUTPUT);  // FUNCIONA EN LOGICA INVERSA!
 
   loraSetup();  //Setup modulo lora
 
