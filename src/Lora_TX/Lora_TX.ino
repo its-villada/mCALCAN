@@ -11,18 +11,19 @@ SFE_BMP180 pressure;
 double baseline;
 double T, P, A;
 unsigned int pktNumber = 0;
-bool transmit = 0, temp1 = 0;
+bool transmit = 0, temp1 = 0, bmpIsInit = 0;
+int disparoMedicion = 0;
 
 #define HW_TIMER_INTERVAL_MS 1
 
-// Init STM32 timer TIM1
+// Init STM32 timer TIM1 and TIM2
 STM32Timer Temp(TIM1);
 STM32Timer LoRaTx(TIM2);
 
 STM32_ISR_Timer ISR_Timer1_Temp;
 STM32_ISR_Timer ISR_Timer2_LoRaTx;
 
-#define TIMER_INTERVAL_1 20L  // TIMER1 salta cada 20 ms
+#define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
 
 void TimerHandler()
@@ -51,7 +52,8 @@ void loop()
     packetSending();
     transmit = 0;
   }
-  if(temp1 == 1){
+  if (temp1 == 1)
+  {
     readTempPressure();
     temp1 = 0;
   }
@@ -61,23 +63,64 @@ void readTempPressure()
 {
   // Funcion que lee la temperatura y presion del módulo BMP180 y calcula la Altura aproximada.
   char status;
-  // Comienza medicion de Temperatura
-  status = pressure.startTemperature();
-  if (status != 0)
+  if (!bmpIsInit)
   {
-    // Espera que termine la medicion de Temperatura
-    delay(status);
-    status = pressure.getTemperature(T);
+    status = pressure.startTemperature();
     if (status != 0)
     {
-      // Comienza medicion de Presion
-      status = pressure.startPressure(3);
+      // Espera que termine la medicion de Temperatura
+      delay(status);
+      status = pressure.getTemperature(T);
       if (status != 0)
       {
-        // Espera que termine la medicion de Presion
-        delay(status);
-        status = pressure.getPressure(P, T);
+        // Comienza medicion de Presion
+        status = pressure.startPressure(3);
+        if (status != 0)
+        {
+          // Espera que termine la medicion de Presion
+          delay(status);
+          status = pressure.getPressure(P, T);
+        }
       }
+    }
+  }
+  else
+  {
+    switch (disparoMedicion)
+    {
+    case 0:
+      status = pressure.startTemperature();
+      if (status != 0)
+      {
+        disparoMedicion++;
+      }
+      break;
+
+    case 1:
+      status = pressure.getTemperature(T);
+      disparoMedicion++;
+      break;
+
+    case 2:
+      status = pressure.startPressure(0);
+      if (status != 0)
+      {
+        disparoMedicion++;
+      }
+      break;
+
+    case 3:
+      status = pressure.getPressure(P, T);
+      disparoMedicion++;
+      break;
+
+    default:
+      break;
+    }
+
+    if (disparoMedicion >= 4)
+    {
+      disparoMedicion = 0;
     }
   }
 }
@@ -110,7 +153,6 @@ void loraSetup()
 void bmpSetup()
 {
   // Inicializar el BMP180
-  bool bmpIsInit = false;
   // Si el BMP180 no inicializa, no arranca la placa y el led onboard queda encendido!
   digitalWrite(LED_BUILTIN, LOW);
   do
@@ -149,19 +191,19 @@ void packetSending()
   LoRa.print(",");
   LoRa.print(P);
   LoRa.print(",");
-  LoRa.print("Giro");
+  LoRa.print("1");
   LoRa.print(",");
-  LoRa.print("Giro");
+  LoRa.print("2");
   LoRa.print(",");
-  LoRa.print("Giro");
+  LoRa.print("3");
   LoRa.print(",");
-  LoRa.print("Vel");
+  LoRa.print("1");
   LoRa.print(",");
-  LoRa.print("Vel");
+  LoRa.print("2");
   LoRa.print(",");
-  LoRa.print("Vel");
+  LoRa.print("3");
   LoRa.print(",");
-  LoRa.print("BAT");
+  LoRa.print("98");
   LoRa.print(",");
   LoRa.print(baseline);
   LoRa.print(",");
