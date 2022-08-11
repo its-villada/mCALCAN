@@ -1,5 +1,6 @@
 #include <SPI.h>
 #include <LoRa.h>
+#include <string.h>
 #include <SFE_BMP180.h>
 
 SFE_BMP180 pressure;
@@ -26,6 +27,8 @@ SFE_BMP180 pressure;
 #define DATA_TIME 500
 
 double altitud;
+
+String input;
 
 int missionTime = 0;
 
@@ -103,11 +106,11 @@ void loop()
       int indicador9 = LoRaData.indexOf(',', indicador8 + 1);
       int indicador10 = LoRaData.indexOf(',', indicador9 + 1);
       int indicador11 = LoRaData.indexOf(',', indicador10 + 1);
-      int indicador12 = LoRaData.indexOf(',', indicador11 + 1);
-      int confirmacion2 = LoRaData.indexOf(',', indicador12 + 1);
+      int confirmacion2 = LoRaData.indexOf(',', indicador11 + 1);
+      String caidaLibre = "1";
 
       String strconf1 = LoRaData.substring(0, confirmacion1);
-      String strconf2 = LoRaData.substring(indicador12 + 1, confirmacion2);
+      String strconf2 = LoRaData.substring(indicador11 + 1, confirmacion2);
 
       if (strconf1 == "1234" && strconf2 == "4321")
       { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo y fin
@@ -116,31 +119,29 @@ void loop()
         //String time;
         //time = String(missionTime);
 
-        String caidaLibre = LoRaData.substring(confirmacion1 + 1, indicador1);
+        String temperatura = LoRaData.substring(confirmacion1 + 1, indicador1);
 
-        String temperatura = LoRaData.substring(indicador1 + 1, indicador2);
+        String presion = LoRaData.substring(indicador1 + 1, indicador2);
 
-        String presion = LoRaData.substring(indicador2 + 1, indicador3);
+        String giro1 = LoRaData.substring(indicador2 + 1, indicador3);
 
-        String giro1 = LoRaData.substring(indicador3 + 1, indicador4);
-        String giro2 = LoRaData.substring(indicador4 + 1, indicador5);
-        String giro3 = LoRaData.substring(indicador5 + 1, indicador6);
+        String giro2 = LoRaData.substring(indicador3 + 1, indicador4);
+        String giro3 = LoRaData.substring(indicador4 + 1, indicador5);
+        String vel1 = LoRaData.substring(indicador5 + 1, indicador6);
 
-        String vel1 = LoRaData.substring(indicador6 + 1, indicador7);
-        String vel2 = LoRaData.substring(indicador7 + 1, indicador8);
-        String vel3 = LoRaData.substring(indicador8 + 1, indicador9);
+        String vel2 = LoRaData.substring(indicador6 + 1, indicador7);
+        String vel3 = LoRaData.substring(indicador7 + 1, indicador8);
+        String bat = LoRaData.substring(indicador8 + 1, indicador9);
 
-        String bat = LoRaData.substring(indicador9 + 1, indicador10);
+        String presionBase = LoRaData.substring(indicador9 + 1, indicador10);
 
-        String presionBase = LoRaData.substring(indicador10 + 1, indicador11);
-
-        String tiempo = LoRaData.substring(indicador11 + 1, indicador12);
+        String tiempo = LoRaData.substring(indicador10 + 1, indicador11);
 
         altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
 
-        Serial.print(tiempo + ",");
-        Serial.print(altitud);
-        Serial.println("," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
+        String sAltitud = String(altitud, 2);
+
+        Serial.println(tiempo + "," + caidaLibre + "," + sAltitud +"," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
         // Apagar LED onboard
         digitalWrite(LED, LOW);
       }
