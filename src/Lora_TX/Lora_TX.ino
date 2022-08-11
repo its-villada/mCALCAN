@@ -11,8 +11,8 @@ SFE_BMP180 pressure;
 double baseline;
 double T, P, A;
 unsigned int pktNumber = 0;
-bool transmit = 0, temp1 = 0, bmpIsInit = 0;
-int disparoMedicion = 0;
+bool transmit = 0, sensors = 0, bmpIsInit = 0;
+int disparoMedicion = 0, batteryLevel;
 
 #define HW_TIMER_INTERVAL_MS 1
 
@@ -52,14 +52,14 @@ void loop()
     packetSending();
     transmit = 0;
   }
-  if (temp1 == 1)
+  if (sensors == 1)
   {
-    readTempPressure();
-    temp1 = 0;
+    readSensors();
+    sensors = 0;
   }
 }
 
-void readTempPressure()
+void readSensors()
 {
   // Funcion que lee la temperatura y presion del módulo BMP180 y calcula la Altura aproximada.
   char status;
@@ -86,6 +86,7 @@ void readTempPressure()
   }
   else
   {
+    batteryLevel = analogRead(BAT);
     switch (disparoMedicion)
     {
     case 0:
@@ -115,12 +116,8 @@ void readTempPressure()
       break;
 
     default:
+        disparoMedicion = 0;
       break;
-    }
-
-    if (disparoMedicion >= 4)
-    {
-      disparoMedicion = 0;
     }
   }
 }
@@ -171,7 +168,7 @@ void timerSetup()
 {
   // Timer1, lectura de temperatura.
   Temp.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
-  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, leerTemp);
+  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);
 
   // Timer2, lora transmit
   LoRaTx.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
@@ -185,25 +182,23 @@ void packetSending()
   LoRa.beginPacket();
   LoRa.print("1234"); // Cadena de comienzo de packet
   LoRa.print(",");
-  LoRa.print("1");
-  LoRa.print(",");
   LoRa.print(T);
   LoRa.print(",");
   LoRa.print(P);
   LoRa.print(",");
-  LoRa.print("1");
+  LoRa.print(giroX);
   LoRa.print(",");
-  LoRa.print("2");
+  LoRa.print(giroY);
   LoRa.print(",");
-  LoRa.print("3");
+  LoRa.print(giroZ);
   LoRa.print(",");
-  LoRa.print("1");
+  LoRa.print(accX);
   LoRa.print(",");
-  LoRa.print("2");
+  LoRa.print(accY);
   LoRa.print(",");
-  LoRa.print("3");
+  LoRa.print(accZ);
   LoRa.print(",");
-  LoRa.print("98");
+  LoRa.print(batteryLevel);
   LoRa.print(",");
   LoRa.print(baseline);
   LoRa.print(",");
@@ -225,7 +220,7 @@ void transmitir()
   transmit = 1;
 }
 
-void leerTemp()
+void sensorsBegin()
 {
-  temp1 = 1;
+  sensors = 1;
 }
