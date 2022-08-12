@@ -21,12 +21,10 @@ int disparoMedicion = 0 , batteryLevel;
 #define INTpin PB8
 #define BAT PA0
 
-// Init STM32 timer TIM1 and TIM2
-STM32Timer Temp(TIM1);
-STM32Timer LoRaTx(TIM2);
+// Init STM32 timer TIM1
+STM32Timer Timer1(TIM1);
 
 STM32_ISR_Timer ISR_Timer1_Temp;
-STM32_ISR_Timer ISR_Timer2_LoRaTx;
 
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
@@ -34,7 +32,6 @@ STM32_ISR_Timer ISR_Timer2_LoRaTx;
 void TimerHandler()
 {
   ISR_Timer1_Temp.run();
-  ISR_Timer2_LoRaTx.run();
 }
 
 void setup()
@@ -199,13 +196,10 @@ void bmpSetup()
 
 void timerSetup()
 {
-  // Timer1, lectura de temperatura.
-  Temp.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
+  // Timer1, lectura de temperatura y transmision
+  Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);
-
-  // Timer2, lora transmit
-  LoRaTx.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
-  ISR_Timer2_LoRaTx.setInterval(TIMER_INTERVAL_2, transmitir);
+  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);
 }
 
 void mpuSetup()
