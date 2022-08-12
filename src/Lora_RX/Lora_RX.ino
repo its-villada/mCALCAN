@@ -149,9 +149,9 @@ void loop()
         vel2 = vel2.toDouble() * 9.8066;
         vel3 = vel3.toDouble() * 9.8066;
 
-        //Printeo de los datos recibidos
+        //Printeo de los datos recibidoscaidaLibre
 
-        Serial.println(tiempo + "," + caidaLibre + "," + sAltitud +"," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
+        Serial.println(tiempo + "," + sAltitud + "," + caidaLibre +"," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
         // Apagar LED onboard
         digitalWrite(LED, LOW);
       }
