@@ -124,13 +124,13 @@ void loop()
         String presion = LoRaData.substring(indicador1 + 1, indicador2);
 
         String giro1 = LoRaData.substring(indicador2 + 1, indicador3);
-
         String giro2 = LoRaData.substring(indicador3 + 1, indicador4);
         String giro3 = LoRaData.substring(indicador4 + 1, indicador5);
-        String vel1 = LoRaData.substring(indicador5 + 1, indicador6);
 
+        String vel1 = LoRaData.substring(indicador5 + 1, indicador6);
         String vel2 = LoRaData.substring(indicador6 + 1, indicador7);
         String vel3 = LoRaData.substring(indicador7 + 1, indicador8);
+
         String bat = LoRaData.substring(indicador8 + 1, indicador9);
 
         String presionBase = LoRaData.substring(indicador9 + 1, indicador10);
@@ -139,9 +139,17 @@ void loop()
 
         altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
 
+        //Calculo de valores crudos recibidos desde el satelite
+
         String sAltitud = String(altitud, 2);
 
         bat = ((bat.toInt() * 100) / 1023);
+
+        vel1 = vel1.toDouble() * 9.8066;
+        vel2 = vel2.toDouble() * 9.8066;
+        vel3 = vel3.toDouble() * 9.8066;
+
+        //Printeo de los datos recibidos
 
         Serial.println(tiempo + "," + caidaLibre + "," + sAltitud +"," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
         // Apagar LED onboard
