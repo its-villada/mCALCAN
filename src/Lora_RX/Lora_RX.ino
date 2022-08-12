@@ -141,7 +141,9 @@ void loop()
 
         String sAltitud = String(altitud, 2);
 
-        Serial.println(tiempo + "," + caidaLibre + "," + sAltitud +"," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
+        bat = ((bat.toInt() * 100) / 1023);
+
+        Serial.println(tiempo + "," + caidaLibre + "," + sAltitud +"," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
         // Apagar LED onboard
         digitalWrite(LED, LOW);
       }
