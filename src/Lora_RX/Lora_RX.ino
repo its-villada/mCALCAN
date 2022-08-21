@@ -28,9 +28,7 @@ SFE_BMP180 pressure;
 
 double altitud;
 
-String input;
-
-int missionTime = 0;
+int pktNumber = 0;
 
 void setup()
 {
@@ -112,12 +110,8 @@ void loop()
       String strconf1 = LoRaData.substring(0, confirmacion1);
       String strconf2 = LoRaData.substring(indicador11 + 1, confirmacion2);
 
-      if (strconf1 == "1234" && strconf2 == "4321")
+      if (strconf1 == "gVIE" && strconf2 == "gVIE")
       { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo y fin
-        // tiempo de la misión
-        //missionTime = missionTime + DATA_TIME;
-        //String time;
-        //time = String(missionTime);
 
         String temperatura = LoRaData.substring(confirmacion1 + 1, indicador1);
 
@@ -139,9 +133,14 @@ void loop()
 
         altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
 
-        //Calculo de valores crudos recibidos desde el satelite
+        // Calculo de valores crudos recibidos desde el satelite
 
         String sAltitud = String(altitud, 2);
+
+        if (sAltitud.toDouble() >= 10)
+        {
+          sAltitud = sAltitud.toDouble() - 10;
+        }
 
         bat = ((bat.toInt() * 100) / 1023);
 
@@ -149,9 +148,9 @@ void loop()
         vel2 = vel2.toDouble() * 9.8066;
         vel3 = vel3.toDouble() * 9.8066;
 
-        //Printeo de los datos recibidoscaidaLibre
+        // Printeo de los datos recibidos
 
-        Serial.println(tiempo + "," + sAltitud + "," + caidaLibre +"," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
+        Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
         // Apagar LED onboard
         digitalWrite(LED, LOW);
       }
