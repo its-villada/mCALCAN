@@ -5,23 +5,26 @@
 #include <SFE_BMP180.h>
 #include <Wire.h>
 #include <SPI.h>
+#include <MPU6050_light.h>
 
 SFE_BMP180 pressure;
+MPU6050 mpu(Wire);
 
 double baseline;
-double T, P, A;
+double T, P, A, giroX, giroY, giroZ, accX, accY, accZ;
 unsigned int pktNumber = 0;
-bool transmit = 0, sensors = 0, bmpIsInit = 0;
-int disparoMedicion = 0, batteryLevel;
+bool transmit = 0, sensors = 0, bmpIsInit = 0, actualizarMpu = 0, leerMpu = 0;
+int disparoMedicion = 0 , batteryLevel;
 
 #define HW_TIMER_INTERVAL_MS 1
 
-// Init STM32 timer TIM1 and TIM2
-STM32Timer Temp(TIM1);
-STM32Timer LoRaTx(TIM2);
+#define INTpin PB8
+#define BAT PA0
+
+// Init STM32 timer TIM1
+STM32Timer Timer1(TIM1);
 
 STM32_ISR_Timer ISR_Timer1_Temp;
-STM32_ISR_Timer ISR_Timer2_LoRaTx;
 
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
@@ -29,20 +32,26 @@ STM32_ISR_Timer ISR_Timer2_LoRaTx;
 void TimerHandler()
 {
   ISR_Timer1_Temp.run();
-  ISR_Timer2_LoRaTx.run();
 }
 
 void setup()
 {
   // put your setup code here, to run once:
   Serial.begin(9600);
+  Wire.begin();
   pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
+  pinMode(BAT, INPUT);
+  pinMode(INTpin, INPUT);
 
   loraSetup(); // Setup modulo lora
 
   bmpSetup(); // Setup modulo de temperatura
 
+  mpuSetup(); // Setup modulo de giroscopio
+
   timerSetup(); // Setup de interrupciones de timer
+
+  attachInterrupt(digitalPinToInterrupt(INTpin), readMPU, FALLING);
 }
 
 void loop()
@@ -56,6 +65,17 @@ void loop()
   {
     readSensors();
     sensors = 0;
+  }
+  if (actualizarMpu == 1)
+  {
+    mpu.update();
+    actualizarMpu = 0;
+  }
+  
+  if (leerMpu == 1)
+  {
+    leerGyro();
+    leerMpu = 0;
   }
 }
 
@@ -86,18 +106,19 @@ void readSensors()
   }
   else
   {
+    actualizarMpu = 1;
     batteryLevel = analogRead(BAT);
     switch (disparoMedicion)
     {
     case 0:
       status = pressure.startTemperature();
       if (status != 0)
-      {
         disparoMedicion++;
-      }
+
       break;
 
     case 1:
+
       status = pressure.getTemperature(T);
       disparoMedicion++;
       break;
@@ -105,9 +126,7 @@ void readSensors()
     case 2:
       status = pressure.startPressure(0);
       if (status != 0)
-      {
         disparoMedicion++;
-      }
       break;
 
     case 3:
@@ -116,15 +135,26 @@ void readSensors()
       break;
 
     default:
-        disparoMedicion = 0;
       break;
     }
+
+    if (disparoMedicion >= 4)
+      disparoMedicion = 0;
   }
+}
+
+void leerGyro()
+{
+  accX = mpu.getAccX();
+  accY = mpu.getAccY();
+  accZ = mpu.getAccZ();
+  giroX = mpu.getAngleX();
+  giroY = mpu.getAngleY();
+  giroZ = mpu.getAngleZ();
 }
 
 void loraSetup()
 {
-
 #define RST PC14             // Pin de Reset del módulo LoRa
 #define SERIAL_BAUDRATE 9600 // Velocidad del Puerto Serie
 
@@ -156,7 +186,7 @@ void bmpSetup()
   {
     delay(100);
     if (pressure.begin())
-      readTempPressure();
+      readSensors();
     baseline = P;
     bmpIsInit = true;
     digitalWrite(LED_BUILTIN, HIGH);
@@ -166,13 +196,27 @@ void bmpSetup()
 
 void timerSetup()
 {
-  // Timer1, lectura de temperatura.
-  Temp.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
+  // Timer1, lectura de temperatura y transmision
+  Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);
+  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);
+}
 
-  // Timer2, lora transmit
-  LoRaTx.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
-  ISR_Timer2_LoRaTx.setInterval(TIMER_INTERVAL_2, transmitir);
+void mpuSetup()
+{
+  byte status = mpu.begin();
+
+  while (status != 0)
+  {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    // stop everything if could not connect to MPU6050
+    delay(1000);
+  }
+
+  mpu.writeData(0x38, 0x01);
+  mpu.writeData(0x37, 0xB0);
+
+  mpu.calcOffsets(true, true); // gyro and accelero
 }
 
 void packetSending()
@@ -209,9 +253,7 @@ void packetSending()
   digitalWrite(PC13, HIGH);
   // Volver a 0 para que no haga overflow
   if (pktNumber >= 65500)
-  {
     pktNumber = 0;
-  }
   pktNumber++;
 }
 
@@ -223,4 +265,9 @@ void transmitir()
 void sensorsBegin()
 {
   sensors = 1;
+}
+
+void readMPU()
+{
+  leerMpu = 1;
 }
