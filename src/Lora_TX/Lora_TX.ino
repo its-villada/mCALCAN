@@ -1,7 +1,7 @@
+#include <LoRa.h>
 #include <STM32TimerInterrupt.h>
 #include <STM32_ISR_Timer.h>
 #include <STM32_ISR_Timer.hpp>
-#include <LoRa_STM32.h>
 #include <SFE_BMP180.h>
 #include <Wire.h>
 #include <SPI.h>
@@ -14,12 +14,15 @@ double baseline;
 double T, P, A, giroX, giroY, giroZ, accX, accY, accZ;
 unsigned int pktNumber = 0;
 bool transmit = 0, sensors = 0, bmpIsInit = 0, actualizarMpu = 0, leerMpu = 0;
-int disparoMedicion = 0 , batteryLevel;
+int disparoMedicion = 0, batteryLevel;
 
 #define HW_TIMER_INTERVAL_MS 1
 
+#define NSS PA15
+#define RST PB3
+#define IRQ PA0
 #define INTpin PB8
-#define BAT PA0
+#define BAT PA1
 
 // Init STM32 timer TIM1
 STM32Timer Timer1(TIM1);
@@ -71,12 +74,50 @@ void loop()
     mpu.update();
     actualizarMpu = 0;
   }
-  
+
   if (leerMpu == 1)
   {
     leerGyro();
     leerMpu = 0;
   }
+}
+
+void packetSending()
+{
+  // Send LoRa packet to receiver
+  digitalWrite(PC13, LOW);
+  LoRa.beginPacket();
+  LoRa.print("gVIE"); // Cadena de comienzo de packet
+  LoRa.print(",");
+  LoRa.print(T);
+  LoRa.print(",");
+  LoRa.print(P);
+  LoRa.print(",");
+  LoRa.print(giroX);
+  LoRa.print(",");
+  LoRa.print(giroY);
+  LoRa.print(",");
+  LoRa.print(giroZ);
+  LoRa.print(",");
+  LoRa.print(accX);
+  LoRa.print(",");
+  LoRa.print(accY);
+  LoRa.print(",");
+  LoRa.print(accZ);
+  LoRa.print(",");
+  LoRa.print(batteryLevel);
+  LoRa.print(",");
+  LoRa.print(baseline);
+  LoRa.print(",");
+  LoRa.print(millis());
+  LoRa.print(",");
+  LoRa.print("gVIE"); // Cadena de fin de packet
+  LoRa.endPacket();
+  digitalWrite(PC13, HIGH);
+  // Volver a 0 para que no haga overflow
+  if (pktNumber >= 65500)
+    pktNumber = 0;
+  pktNumber++;
 }
 
 void readSensors()
@@ -114,11 +155,9 @@ void readSensors()
       status = pressure.startTemperature();
       if (status != 0)
         disparoMedicion++;
-
       break;
 
     case 1:
-
       status = pressure.getTemperature(T);
       disparoMedicion++;
       break;
@@ -135,11 +174,9 @@ void readSensors()
       break;
 
     default:
+      disparoMedicion = 0;
       break;
     }
-
-    if (disparoMedicion >= 4)
-      disparoMedicion = 0;
   }
 }
 
@@ -155,7 +192,6 @@ void leerGyro()
 
 void loraSetup()
 {
-#define RST PC14             // Pin de Reset del módulo LoRa
 #define SERIAL_BAUDRATE 9600 // Velocidad del Puerto Serie
 
 #define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
@@ -167,6 +203,7 @@ void loraSetup()
 
   pinMode(RST, OUTPUT);
   digitalWrite(RST, HIGH);
+  LoRa.setPins(NSS, RST, IRQ);
   // Inicializar módulo LoRa
   while (!LoRa.begin(LORA_FREQUENCY))
     ;
@@ -217,44 +254,6 @@ void mpuSetup()
   mpu.writeData(0x37, 0xB0);
 
   mpu.calcOffsets(true, true); // gyro and accelero
-}
-
-void packetSending()
-{
-  // Send LoRa packet to receiver
-  digitalWrite(PC13, LOW);
-  LoRa.beginPacket();
-  LoRa.print("1234"); // Cadena de comienzo de packet
-  LoRa.print(",");
-  LoRa.print(T);
-  LoRa.print(",");
-  LoRa.print(P);
-  LoRa.print(",");
-  LoRa.print(giroX);
-  LoRa.print(",");
-  LoRa.print(giroY);
-  LoRa.print(",");
-  LoRa.print(giroZ);
-  LoRa.print(",");
-  LoRa.print(accX);
-  LoRa.print(",");
-  LoRa.print(accY);
-  LoRa.print(",");
-  LoRa.print(accZ);
-  LoRa.print(",");
-  LoRa.print(batteryLevel);
-  LoRa.print(",");
-  LoRa.print(baseline);
-  LoRa.print(",");
-  LoRa.print(millis());
-  LoRa.print(",");
-  LoRa.print("4321"); // Cadena de fin de packet
-  LoRa.endPacket();
-  digitalWrite(PC13, HIGH);
-  // Volver a 0 para que no haga overflow
-  if (pktNumber >= 65500)
-    pktNumber = 0;
-  pktNumber++;
 }
 
 void transmitir()
