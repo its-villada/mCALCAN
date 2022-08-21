@@ -27,133 +27,237 @@ SFE_BMP180 pressure;
 #define DATA_TIME 500
 
 double altitud;
+bool responder = 0, haRespondido = 0, noPudoProcesar = 0, escribirDatos = 0, ejecutarAccion = 0, inicializacion = 0, error = 0, cansatReset = 0;
+
+String LoRaData, presionBase, data = "";
 
 int pktNumber = 0;
 
 void setup()
 {
-  // Set Led onboard con Output
-  pinMode(LED, OUTPUT);
-  // Incializo el Serial Monitor
-  Serial.begin(SERIAL_BAUDRATE);
-  while (!Serial)
-  {
-    // Mientras el COM no esté disponible el LED onbooard encendido
-    digitalWrite(LED, HIGH);
-  }
-  // Apaga el LED si se conecta al COM
-  digitalWrite(LED, LOW);
-  Serial.println("LoRa Receiver");
-  // Inicializar módulo LoRa
-  LoRa.setPins(CS, RST, IRQ);
-  while (!LoRa.begin(LORA_FREQUENCY))
-  {
-    Serial.println(".");
-    delay(DATA_TIME);
-  }
-  // Change sync word (0xF3) to match the receiver
-  // The sync word assures you don't get LoRa messages from other LoRa transceivers
-  // ranges from 0-0xFF
-  LoRa.setSyncWord(LORA_SYNC_WORD);
-  LoRa.setTxPower(LORA_POWER);
-  LoRa.setSpreadingFactor(LORA_SPREAD_FACTOR);
-  LoRa.setSignalBandwidth(LORA_SIG_BANDWIDTH);
-  LoRa.setCodingRate4(LORA_CODING_RATE);
+    // Set Led onboard con Output
+    pinMode(LED, OUTPUT);
+    // Incializo el Serial Monitor
+    Serial.begin(SERIAL_BAUDRATE);
+    while (!Serial)
+    {
+        // Mientras el COM no esté disponible el LED onbooard encendido
+        digitalWrite(LED, HIGH);
+    }
+    // Apaga el LED si se conecta al COM
+    digitalWrite(LED, LOW);
+    Serial.println("LoRa Receiver");
+    // Inicializar módulo LoRa
+    LoRa.setPins(CS, RST, IRQ);
+    while (!LoRa.begin(LORA_FREQUENCY))
+    {
+        Serial.println(".");
+        delay(DATA_TIME);
+    }
+    // Change sync word (0xF3) to match the receiver
+    // The sync word assures you don't get LoRa messages from other LoRa transceivers
+    // ranges from 0-0xFF
+    LoRa.setSyncWord(LORA_SYNC_WORD);
+    LoRa.setTxPower(LORA_POWER);
+    LoRa.setSpreadingFactor(LORA_SPREAD_FACTOR);
+    LoRa.setSignalBandwidth(LORA_SIG_BANDWIDTH);
+    LoRa.setCodingRate4(LORA_CODING_RATE);
 
-  Serial.println("LoRa Initializing OK!");
+    Serial.println("LoRa Initializing OK!");
+    LoRa.onReceive(onReceive);
+    LoRa.receive();
 }
 
 void loop()
 {
-  // los datos deben imprimirse en el siguiente orden para
-  // ser interpretados por la estación terrena
-  // 0 - tiempo mision (ms)
-  // 1 - altitud (m)
-  // 2 - caída libre (1,0)
-  // 3 - temperatura (°C)
-  // 4 - presión
-  // 5 - giro
-  // 6 - giro
-  // 7 - giro
-  // 8 - velocidad (m/s)
-  // 9 - velocidad (m/s)
-  // 10 - velocidad (m/s)
-  // 11 - nivel de batería
+}
 
-  // Trato de parsear el paquete
-  int packetSize = LoRa.parsePacket();
-  if (packetSize)
-  {
-    // Encender LED onboard
-    digitalWrite(LED, HIGH);
-    // Paquete recibido
-    // Lectura del paquete
-    while (LoRa.available())
-    {
-      String LoRaData = LoRa.readString();
+void onReceive(int packetSize)
+{
+    String LoRaData = LoRa.readString();
 
-      int confirmacion1 = LoRaData.indexOf(',');
-      int indicador1 = LoRaData.indexOf(',', confirmacion1 + 1);
-      int indicador2 = LoRaData.indexOf(',', indicador1 + 1);
-      int indicador3 = LoRaData.indexOf(',', indicador2 + 1);
-      int indicador4 = LoRaData.indexOf(',', indicador3 + 1);
-      int indicador5 = LoRaData.indexOf(',', indicador4 + 1);
-      int indicador6 = LoRaData.indexOf(',', indicador5 + 1);
-      int indicador7 = LoRaData.indexOf(',', indicador6 + 1);
-      int indicador8 = LoRaData.indexOf(',', indicador7 + 1);
-      int indicador9 = LoRaData.indexOf(',', indicador8 + 1);
-      int indicador10 = LoRaData.indexOf(',', indicador9 + 1);
-      int indicador11 = LoRaData.indexOf(',', indicador10 + 1);
-      int confirmacion2 = LoRaData.indexOf(',', indicador11 + 1);
-      String caidaLibre = "1";
+    int confirmacion0 = LoRaData.indexOf(',');            // Header
+    int tipo1 = LoRaData.indexOf(',', confirmacion0 + 1); // Tipo de mensaje
+    int codigo2 = LoRaData.indexOf(',', tipo1 + 1);       // Codigo de solicitud/respuesta
 
-      String strconf1 = LoRaData.substring(0, confirmacion1);
-      String strconf2 = LoRaData.substring(indicador11 + 1, confirmacion2);
+    String strconf1 = LoRaData.substring(0, confirmacion0);
+    String tipomsg = LoRaData.substring(confirmacion0 + 1, tipo1);
+    String codigomsg = LoRaData.substring(tipo1 + 1, codigo2);
 
-      if (strconf1 == "gVIE" && strconf2 == "gVIE")
-      { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo y fin
+    if (strconf1 == "gvie")
+    { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo
 
-        String temperatura = LoRaData.substring(confirmacion1 + 1, indicador1);
-
-        String presion = LoRaData.substring(indicador1 + 1, indicador2);
-
-        String giro1 = LoRaData.substring(indicador2 + 1, indicador3);
-        String giro2 = LoRaData.substring(indicador3 + 1, indicador4);
-        String giro3 = LoRaData.substring(indicador4 + 1, indicador5);
-
-        String vel1 = LoRaData.substring(indicador5 + 1, indicador6);
-        String vel2 = LoRaData.substring(indicador6 + 1, indicador7);
-        String vel3 = LoRaData.substring(indicador7 + 1, indicador8);
-
-        String bat = LoRaData.substring(indicador8 + 1, indicador9);
-
-        String presionBase = LoRaData.substring(indicador9 + 1, indicador10);
-
-        String tiempo = LoRaData.substring(indicador10 + 1, indicador11);
-
-        altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
-
-        // Calculo de valores crudos recibidos desde el satelite
-
-        String sAltitud = String(altitud, 2);
-
-        if (sAltitud.toDouble() >= 10)
+        switch (tipomsg.toInt()) // Puede ser 0, 1, 2, o 3
         {
-          sAltitud = sAltitud.toDouble() - 10;
+        case 0:
+            responder = 1; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
+            break;
+
+        case 1:
+            responder = 0; // Se espera que el mensaje sea de tipo no confirmable
+            break;
+
+        case 2:
+            haRespondido = 1; // Significa que el paquete enviado es para confirmar un comando
+            break;
+
+        case 3:
+            noPudoProcesar = 1; // Significa que el paquete enviado pudo ser procesado
+            break;
+
+        default:
+            break;
         }
 
-        bat = ((bat.toInt() * 100) / 1023);
+        if (!haRespondido && !noPudoProcesar)
+        {
+            switch (codigomsg.toInt())
+            {
 
-        vel1 = vel1.toDouble() * 9.8066;
-        vel2 = vel2.toDouble() * 9.8066;
-        vel3 = vel3.toDouble() * 9.8066;
+            case 1:
+                escribirDatos = 1; // El mensaje recibido es para escribir datos
+                break;
 
-        // Printeo de los datos recibidos
+            case 2:
+                ejecutarAccion = 1; // EL mensaje recibido es para ejecutar una accion
+                break;
 
-        Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
-        // Apagar LED onboard
-        digitalWrite(LED, LOW);
-      }
+            case 3:
+                resetFunc(); // El mensaje recibido es para resetear el sistema
+                break;
+
+            case 4:
+                error = 1;
+                break;
+
+            case 10:
+                inicializacion = 1; // El mensaje recibido es para inicializar un dato
+                break;
+
+            default:
+                break;
+            }
+        }
+
+        if (escribirDatos)
+        {
+            int indicador1 = LoRaData.indexOf(',', codigo2 + 1); // Datos
+            int indicador2 = LoRaData.indexOf(',', indicador1 + 1);
+            int indicador3 = LoRaData.indexOf(',', indicador2 + 1);
+            int indicador4 = LoRaData.indexOf(',', indicador3 + 1);
+            int indicador5 = LoRaData.indexOf(',', indicador4 + 1);
+            int indicador6 = LoRaData.indexOf(',', indicador5 + 1);
+            int indicador7 = LoRaData.indexOf(',', indicador6 + 1);
+            int indicador8 = LoRaData.indexOf(',', indicador7 + 1);
+            int indicador9 = LoRaData.indexOf(',', indicador8 + 1);
+            int indicador10 = LoRaData.indexOf(',', indicador9 + 1);
+
+            String caidaLibre = "1";
+
+            String temperatura = LoRaData.substring(codigo2 + 1, indicador1);
+
+            String presion = LoRaData.substring(indicador1 + 1, indicador2);
+
+            String giro1 = LoRaData.substring(indicador2 + 1, indicador3);
+            String giro2 = LoRaData.substring(indicador3 + 1, indicador4);
+            String giro3 = LoRaData.substring(indicador4 + 1, indicador5);
+
+            String vel1 = LoRaData.substring(indicador5 + 1, indicador6);
+            String vel2 = LoRaData.substring(indicador6 + 1, indicador7);
+            String vel3 = LoRaData.substring(indicador7 + 1, indicador8);
+
+            String bat = LoRaData.substring(indicador8 + 1, indicador9);
+
+            String tiempo = LoRaData.substring(indicador9 + 1, indicador10);
+
+            altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
+
+            // Calculo de valores crudos recibidos desde el satelite
+
+            String sAltitud = String(altitud, 2);
+
+            if (sAltitud.toDouble() >= 10)
+            {
+                sAltitud = sAltitud.toDouble() - 10;
+            }
+
+            bat = ((bat.toInt() * 100) / 1023);
+
+            vel1 = vel1.toDouble() * 9.8066;
+            vel2 = vel2.toDouble() * 9.8066;
+            vel3 = vel3.toDouble() * 9.8066;
+
+            // Printeo de los datos recibidos
+
+            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
+            // Apagar LED onboard
+            digitalWrite(LED, LOW);
+            escribirDatos = 0;
+        }
+        if (inicializacion)
+        {
+            int presion = LoRaData.indexOf(',', codigo2 + 1);
+            presionBase = LoRaData.substring(codigo2 + 1, presion);
+            if (presionBase.toInt() <= 500)
+            {
+                Serial.println("Error obteniendo la presion Base");
+                responder = 0;
+            }
+            else
+            {
+                Serial.println("Presion Base:" + presionBase);
+                data = presionBase;
+                responder = 1;
+                inicializacion = 0;
+            }
+        }
+        if (responder)
+        {
+            confirmacion(data, codigomsg);
+            responder = 0;
+        }
+        if (error)
+        {
+            int indicador1 = LoRaData.indexOf(',', codigo2 + 1);
+            String sError = LoRaData.substring(codigo2 + 1, indicador1); // Significa que hubo un error en el cansat, se reinicia el sistema
+            Serial.println(sError);
+            error = 0;
+        }
+        if (cansatReset = 1)
+        {
+            reset();
+        }
     }
-  }
 }
+
+void confirmacion(String datos, String codigomsg)
+{
+    digitalWrite(LED_BUILTIN, HIGH);
+    LoRa.beginPacket();
+    LoRa.print("gvie");
+    LoRa.print(",");
+    LoRa.print("2");
+    LoRa.print(",");
+    LoRa.print(codigomsg);
+    LoRa.print(",");
+    LoRa.print(datos);
+    LoRa.endPacket(true);
+    LoRa.receive();
+    digitalWrite(LED_BUILTIN, LOW);
+}
+
+void reset()
+{
+    digitalWrite(LED_BUILTIN, HIGH);
+    LoRa.beginPacket();
+    LoRa.print("gvie");
+    LoRa.print(",");
+    LoRa.print("1");
+    LoRa.print(",");
+    LoRa.print("3X");
+    LoRa.endPacket(true);
+    LoRa.receive();
+    digitalWrite(LED_BUILTIN, LOW);
+}
+
+void (*resetFunc)(void) = 0;
