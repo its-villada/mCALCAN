@@ -27,11 +27,13 @@ SFE_BMP180 pressure;
 #define DATA_TIME 500
 
 double altitud;
-bool responder = 0, haRespondido = 0, noPudoProcesar = 0, escribirDatos = 0, ejecutarAccion = 0, inicializacion = 0, error = 0, cansatReset = 0;
+bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, error = false, cansatReset = false, telemetria = false;
 
 String LoRaData, presionBase, data = "";
 
 int pktNumber = 0;
+
+void (*resetFunc)(void) = 0;
 
 void setup()
 {
@@ -90,19 +92,19 @@ void onReceive(int packetSize)
         switch (tipomsg.toInt()) // Puede ser 0, 1, 2, o 3
         {
         case 0:
-            responder = 1; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
+            responder = true; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
             break;
 
         case 1:
-            responder = 0; // Se espera que el mensaje sea de tipo no confirmable
+            responder = false; // Se espera que el mensaje sea de tipo no confirmable
             break;
 
         case 2:
-            haRespondido = 1; // Significa que el paquete enviado es para confirmar un comando
+            haRespondido = true; // Significa que el paquete enviado es para confirmar un comando
             break;
 
         case 3:
-            noPudoProcesar = 1; // Significa que el paquete enviado pudo ser procesado
+            noPudoProcesar = true; // Significa que el paquete enviado pudo ser procesado
             break;
 
         default:
@@ -115,11 +117,11 @@ void onReceive(int packetSize)
             {
 
             case 1:
-                escribirDatos = 1; // El mensaje recibido es para escribir datos
+                escribirDatos = true; // El mensaje recibido es para escribir datos
                 break;
 
             case 2:
-                ejecutarAccion = 1; // EL mensaje recibido es para ejecutar una accion
+                ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
                 break;
 
             case 3:
@@ -127,11 +129,15 @@ void onReceive(int packetSize)
                 break;
 
             case 4:
-                error = 1;
+                error = true;
                 break;
 
             case 10:
-                inicializacion = 1; // El mensaje recibido es para inicializar un dato
+                inicializacion = true; // El mensaje recibido es para inicializar un dato
+                break;
+
+            case 14:
+                telemetria = true;
                 break;
 
             default:
@@ -139,7 +145,7 @@ void onReceive(int packetSize)
             }
         }
 
-        if (escribirDatos)
+        if (telemetria)
         {
             int indicador1 = LoRaData.indexOf(',', codigo2 + 1); // Datos
             int indicador2 = LoRaData.indexOf(',', indicador1 + 1);
@@ -151,8 +157,8 @@ void onReceive(int packetSize)
             int indicador8 = LoRaData.indexOf(',', indicador7 + 1);
             int indicador9 = LoRaData.indexOf(',', indicador8 + 1);
             int indicador10 = LoRaData.indexOf(',', indicador9 + 1);
-
-            String caidaLibre = "1";
+            int indicador11 = LoRaData.indexOf(',', indicador10 + 1);
+            int indicador12 = LoRaData.indexOf(',', indicador11 + 1);
 
             String temperatura = LoRaData.substring(codigo2 + 1, indicador1);
 
@@ -169,6 +175,12 @@ void onReceive(int packetSize)
             String bat = LoRaData.substring(indicador8 + 1, indicador9);
 
             String tiempo = LoRaData.substring(indicador9 + 1, indicador10);
+
+            String caidaLibre = LoRaData.substring(indicador10 + 1, indicador11);
+
+            String calidadDeAire = LoRaData.substring(indicador11 + 1, indicador12);
+
+            calidadDeAire = (calidadDeAire.toInt() - 282);
 
             altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
 
@@ -189,10 +201,10 @@ void onReceive(int packetSize)
 
             // Printeo de los datos recibidos
 
-            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat);
+            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat + "," + calidadDeAire);
             // Apagar LED onboard
             digitalWrite(LED, LOW);
-            escribirDatos = 0;
+            telemetria = false;
         }
         if (inicializacion)
         {
@@ -201,29 +213,29 @@ void onReceive(int packetSize)
             if (presionBase.toInt() <= 500)
             {
                 Serial.println("Error obteniendo la presion Base");
-                responder = 0;
+                responder = false;
             }
             else
             {
                 Serial.println("Presion Base:" + presionBase);
                 data = presionBase;
-                responder = 1;
-                inicializacion = 0;
+                responder = true;
+                inicializacion = false;
             }
         }
         if (responder)
         {
             confirmacion(data, codigomsg);
-            responder = 0;
+            responder = false;
         }
         if (error)
         {
             int indicador1 = LoRaData.indexOf(',', codigo2 + 1);
             String sError = LoRaData.substring(codigo2 + 1, indicador1); // Significa que hubo un error en el cansat, se reinicia el sistema
             Serial.println(sError);
-            error = 0;
+            error = false;
         }
-        if (cansatReset = 1)
+        if (cansatReset = true)
         {
             reset();
         }
@@ -259,5 +271,3 @@ void reset()
     LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
 }
-
-void (*resetFunc)(void) = 0;
