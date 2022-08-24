@@ -13,9 +13,9 @@ MPU6050 mpu(Wire);
 double baseline;
 double T, P, A, giroX, giroY, giroZ, accX, accY, accZ;
 unsigned int pktNumber = 0;
-bool transmit = 0, sensors = 0, bmpIsInit = 0, actualizarMpu = 0, leerMpu = 0;
-bool responder = 0, haRespondido = 0, noPudoProcesar = 0, escribirDatos = 0, ejecutarAccion = 0, inicializacion = 1, inicializado = 0, enviarDevuelta = 1;
-int disparoMedicion = 0, batteryLevel;
+bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false;
+bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true;
+int disparoMedicion = 0, batteryLevel, MQ135;
 uint32_t tiempoMision = 0, empezarMision = 0;
 String dataEnviar = "", dataRecibir;
 
@@ -23,9 +23,12 @@ String dataEnviar = "", dataRecibir;
 
 #define NSS PA15
 #define RST PB3
-#define IRQ PA0
-#define INTpin PB8
-#define BAT PA1
+#define IRQ PA1
+#define INTpin PA2
+#define DRDY PA11
+#define BAT PA0
+#define MainS PA12
+#define AQS PA4
 
 // Init STM32 timer TIM1
 STM32Timer Timer1(TIM1);
@@ -46,9 +49,12 @@ void setup()
   Serial.begin(9600);
   Wire.begin();
   pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
-  digitalWrite(PC13, HIGH);
+  pinMode(MainS, OUTPUT);
   pinMode(BAT, INPUT);
   pinMode(INTpin, INPUT);
+  pinMode(AQS, INPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+  digitalWrite(MainS, HIGH);
 
   loraSetup(); // Setup modulo lora
 
@@ -64,36 +70,40 @@ void loop()
   {
     if (inicializacion)
     {
+      digitalWrite(MainS, HIGH);
       empezarMision = millis();
       bmpSetup(); // Setup modulo de temperatura
-      mpuSetup(); // Setup modulo de giroscopio
-      while (!haRespondido)
-        enviarPresionBase();
-      inicializado = 1;
+      // mpuSetup(); // Setup modulo de giroscopio
+      // while (!haRespondido)
+      //   enviarPresionBase();
+      inicializado = true;
     }
   }
   else
   {
-    if (transmit == 1)
+    if (transmit == true)
     {
       packetSending();
-      transmit = 0;
+      transmit = false;
     }
-    if (sensors == 1)
+    if (sensors == true)
     {
       readSensors();
-      sensors = 0;
+      sensors = false;
     }
-    if (actualizarMpu == 1)
+    if (actualizarMpu == true)
     {
-      mpu.update();
-      actualizarMpu = 0;
+      // mpu.update();
+      actualizarMpu = false;
     }
 
-    if (leerMpu == 1)
+    if (leerMpu == true)
     {
-      leerGyro();
-      leerMpu = 0;
+      if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
+        leerGyro();
+      if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x80))
+        isFreeFall = true;
+      leerMpu = false;
     }
   }
 }
@@ -102,14 +112,14 @@ void packetSending()
 {
   tiempoMision = (millis() - empezarMision);
   // Send LoRa packet to receiver
-  digitalWrite(PC13, LOW);
+  digitalWrite(LED_BUILTIN, LOW);
   LoRa.beginPacket();
   LoRa.print("gvie"); // Cadena de comienzo de packet
   LoRa.print(",");
   LoRa.print("1"); // Tipo de mensaje, este es un mensaje no confirmable
   LoRa.print(",");
   LoRa.print("1"); // Codigo de solicitud/respuesta (2 bytes) Primer byte, escribir datos
-  LoRa.print("x"); // Segundo Byte, X
+  LoRa.print("4"); // Segundo Byte, Telemetria
   LoRa.print(",");
   LoRa.print(T); // Datos
   LoRa.print(",");
@@ -130,9 +140,19 @@ void packetSending()
   LoRa.print(batteryLevel);
   LoRa.print(",");
   LoRa.print(tiempoMision);
+  LoRa.print(",");
+  if (isFreeFall)
+  {
+    LoRa.print(isFreeFall);
+    isFreeFall = false;
+  }
+  else
+    LoRa.print("0");
+  LoRa.print(",");
+  LoRa.print(MQ135);
   LoRa.endPacket(true);
   // LoRa.receive();
-  digitalWrite(PC13, HIGH);
+  digitalWrite(LED_BUILTIN, HIGH);
   // Volver a 0 para que no haga overflow
   if (pktNumber >= 65500)
     pktNumber = 0;
@@ -157,7 +177,7 @@ void onReceive(int packetSize)
     switch (tipomsg.toInt()) // Puede ser 0, 1, 2, o 3
     {
     case 0:
-      responder = 1; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
+      responder = true; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
       break;
 
     case 1:
@@ -165,11 +185,11 @@ void onReceive(int packetSize)
       break;
 
     case 2:
-      haRespondido = 1; // Significa que el paquete enviado es para confirmar un comando
+      haRespondido = true; // Significa que el paquete enviado es para confirmar un comando
       break;
 
     case 3:
-      noPudoProcesar = 1; // Significa que el paquete enviado pudo ser procesado
+      noPudoProcesar = true; // Significa que el paquete enviado pudo ser procesado
       break;
 
     default:
@@ -181,11 +201,11 @@ void onReceive(int packetSize)
       switch (codigomsg.toInt())
       {
       case 1:
-        escribirDatos = 1; // El mensaje recibido es para escribir datos
+        escribirDatos = true; // El mensaje recibido es para escribir datos
         break;
 
       case 2:
-        ejecutarAccion = 1; // EL mensaje recibido es para ejecutar una accion
+        ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
         break;
 
       case 3:
@@ -193,7 +213,7 @@ void onReceive(int packetSize)
         break;
 
       case 10:
-        inicializacion = 1; // El mensaje recibido es para comenzar la inicializacion de datos
+        inicializacion = true; // El mensaje recibido es para comenzar la inicializacion de datos
         break;
 
       default:
@@ -204,7 +224,7 @@ void onReceive(int packetSize)
     if (responder)
     {
       confirmacion(dataEnviar, codigomsg);
-      responder = 0;
+      responder = false;
     }
   }
 }
@@ -229,7 +249,7 @@ void enviarPresionBase()
 {
   if (enviarDevuelta)
   {
-    digitalWrite(PC13, !digitalRead(PC13));
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     LoRa.beginPacket();
     LoRa.print("gvie"); // Cadena de comienzo de packet
     LoRa.print(",");
@@ -241,7 +261,7 @@ void enviarPresionBase()
     LoRa.print(baseline);
     LoRa.endPacket(true);
     LoRa.receive();
-    enviarDevuelta = 0;
+    enviarDevuelta = false;
   }
 }
 
@@ -256,7 +276,7 @@ void reportarError(String data)
   LoRa.print("X"); // Segundo Byte, no se toma en cuenta
   LoRa.print(",");
   LoRa.print(data); // Se informa cual fue el error
-  LoRa.endPacket();
+  LoRa.endPacket(true);
   LoRa.receive();
 }
 
@@ -287,8 +307,9 @@ void readSensors()
   }
   else
   {
-    actualizarMpu = 1;
+    actualizarMpu = true;
     batteryLevel = analogRead(BAT);
+    MQ135 = analogRead(AQS);
     switch (disparoMedicion)
     {
     case 0:
@@ -314,7 +335,7 @@ void readSensors()
       break;
 
     default:
-      disparoMedicion = 0;
+      disparoMedicion = false;
       break;
     }
   }
@@ -354,6 +375,7 @@ void loraSetup()
   LoRa.setSyncWord(LORA_SYNC_WORD);
 
   LoRa.onReceive(onReceive);
+  LoRa.receive();
 }
 
 void bmpSetup()
@@ -399,7 +421,9 @@ void mpuSetup()
     }
   }
 
-  mpu.writeData(0x38, 0x01);
+  mpu.writeData(0x38, 0x81);
+  mpu.writeData(0x1D, 17);
+  mpu.writeData(0x1E, 2);
   mpu.writeData(0x37, 0xB0);
 
   mpu.calcOffsets(true, true); // gyro and accelero
@@ -407,7 +431,7 @@ void mpuSetup()
 
 void transmitir()
 {
-  transmit = 1; // Se transmiten datos a la estacion terrena
+  transmit = true; // Se transmiten datos a la estacion terrena
   if (!haRespondido)
   {
     enviarDevuelta = !enviarDevuelta; // Si han pasado 1000 ms, y no se respondio al comando, se vuelve a enviar
@@ -416,10 +440,10 @@ void transmitir()
 
 void sensorsBegin()
 {
-  sensors = 1; // Se completa un ciclo de la lectura de sensores
+  sensors = true; // Se completa un ciclo de la lectura de sensores
 }
 
 void readMPU()
 {
-  leerMpu = 1; // Comienza la lectura del mpu
+  leerMpu = true; // Comienza la lectura del mpu
 }
