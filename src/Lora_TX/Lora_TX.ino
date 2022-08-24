@@ -6,16 +6,19 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <MPU6050_light.h>
+#include <AHTxx.h>
 
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
+AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 
+float ahtValue;
 double baseline;
 double T, P, A, giroX, giroY, giroZ, accX, accY, accZ;
 unsigned int pktNumber = 0;
 bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false;
-bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true;
-int disparoMedicion = 0, batteryLevel, MQ135;
+bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true, cicloAht = true;
+int disparoMedicion = 0, batteryLevel, MQ135, readAht = 0;
 uint32_t tiempoMision = 0, empezarMision = 0;
 String dataEnviar = "", dataRecibir;
 
@@ -38,7 +41,8 @@ STM32_ISR_Timer ISR_Timer1_Temp;
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
 
-void TimerHandler()
+
+void Timer1Handler()
 {
   ISR_Timer1_Temp.run();
 }
@@ -73,6 +77,7 @@ void loop()
       digitalWrite(MainS, HIGH);
       empezarMision = millis();
       bmpSetup(); // Setup modulo de temperatura
+      aht10Setup();
       // mpuSetup(); // Setup modulo de giroscopio
       // while (!haRespondido)
       //   enviarPresionBase();
@@ -81,6 +86,12 @@ void loop()
   }
   else
   {
+    if (cicloAht == true)
+    {
+      ahtValue = aht10.readHumidity();
+      cicloAht = false;
+    }
+    
     if (transmit == true)
     {
       packetSending();
@@ -96,7 +107,6 @@ void loop()
       // mpu.update();
       actualizarMpu = false;
     }
-
     if (leerMpu == true)
     {
       if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
@@ -150,6 +160,8 @@ void packetSending()
     LoRa.print("0");
   LoRa.print(",");
   LoRa.print(MQ135);
+  LoRa.print(",");
+  LoRa.print(ahtValue);
   LoRa.endPacket(true);
   // LoRa.receive();
   digitalWrite(LED_BUILTIN, HIGH);
@@ -307,13 +319,20 @@ void readSensors()
   }
   else
   {
-    actualizarMpu = true;
-    batteryLevel = analogRead(BAT);
-    MQ135 = analogRead(AQS);
+    readAht++;
+    if (readAht == 400)
+    {
+      cicloAht = true;
+      readAht = 0;
+    }
+    
     switch (disparoMedicion)
     {
     case 0:
       status = pressure.startTemperature();
+      batteryLevel = analogRead(BAT);
+      MQ135 = analogRead(AQS);
+      actualizarMpu = true;
       if (status != 0)
         disparoMedicion++;
       break;
@@ -324,17 +343,19 @@ void readSensors()
       break;
 
     case 2:
+      actualizarMpu = true;
       status = pressure.startPressure(0);
       if (status != 0)
         disparoMedicion++;
       break;
 
     case 3:
-      status = pressure.getPressure(P, T);
+      // status = pressure.getPressure(P, T);
       disparoMedicion++;
       break;
 
     default:
+      ahtValue = aht10.readHumidity(AHTXX_USE_READ_DATA);
       disparoMedicion = false;
       break;
     }
@@ -391,14 +412,14 @@ void bmpSetup()
     baseline = P;
     bmpIsInit = true;
     digitalWrite(LED_BUILTIN, HIGH);
-  } // LoRa OK!, Iniciando BMP180, BMP180 inicio OK, baseline
+  } // Iniciando BMP180, BMP180 inicio OK, baseline
   while (!bmpIsInit);
 }
 
 void timerSetup()
 {
   // Timer1, lectura de temperatura y transmision
-  Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
+  Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, Timer1Handler);
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin); // Intervalo de timer para los ciclos de lectura de sensor
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);   // Intervalo de timer para la transmision de datos a la ET
 }
@@ -427,6 +448,25 @@ void mpuSetup()
   mpu.writeData(0x37, 0xB0);
 
   mpu.calcOffsets(true, true); // gyro and accelero
+}
+
+void aht10Setup()
+{
+  int deberiaResetear = 0;
+
+  while (!aht10.begin())
+  {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    // stop everything if could not connect to MPU6050
+    delay(1000);
+    deberiaResetear++;
+    if (deberiaResetear >= 4)
+    {
+      reportarError("Error iniciando el AHT10");
+    }
+  }
+  // aht10.readTemperature();
+  // ahtValue = aht10.readHumidity(AHTXX_USE_READ_DATA);
 }
 
 void transmitir()
