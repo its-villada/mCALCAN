@@ -7,20 +7,21 @@
 #include <SPI.h>
 #include <MPU6050_light.h>
 #include <AHTxx.h>
+#include <SD.h>
 
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 
-float ahtValue;
-double baseline;
-double T, P, A, giroX, giroY, giroZ, accX, accY, accZ;
+double T, P, A, giroX, giroY, giroZ, accX, accY, accZ, baseline, ahtValue;
 unsigned int pktNumber = 0;
 bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false;
-bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true, cicloAht = true;
-int disparoMedicion = 0, batteryLevel, MQ135, readAht = 0;
-uint32_t tiempoMision = 0, empezarMision = 0;
+bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true, escritura = false;
+int disparoMedicion = 0, batteryLevel, MQ135, readAht = 0, cicloAht = 0;
+uint32_t tiempoMision = 0, empezarMision = 0, humidity;
 String dataEnviar = "", dataRecibir;
+File archivo;
+uint8_t _rawData[7] = {0, 0, 0, 0, 0, 0, 0}; //{status, RH, RH, RH+T, T, T, CRC}, CRC for AHT2x only
 
 #define HW_TIMER_INTERVAL_MS 1
 
@@ -32,6 +33,7 @@ String dataEnviar = "", dataRecibir;
 #define BAT PA0
 #define MainS PA12
 #define AQS PA4
+#define SPI2_NSS_PIN PB12
 
 // Init STM32 timer TIM1
 STM32Timer Timer1(TIM1);
@@ -40,7 +42,7 @@ STM32_ISR_Timer ISR_Timer1_Temp;
 
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
-
+#define TIMER_INTERVAL_3 23L  // Timer3 salta cada 23 ms
 
 void Timer1Handler()
 {
@@ -59,6 +61,13 @@ void setup()
   pinMode(AQS, INPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   digitalWrite(MainS, HIGH);
+
+  //SPI.setMISO(PB14);
+  //SPI.setMOSI(PB15);
+  //SPI.setSCLK(PB13);
+
+  //archivo = SD.open("datos.csv", FILE_WRITE);
+  //archivo.close();
 
   loraSetup(); // Setup modulo lora
 
@@ -79,19 +88,21 @@ void loop()
       bmpSetup(); // Setup modulo de temperatura
       aht10Setup();
       // mpuSetup(); // Setup modulo de giroscopio
-      // while (!haRespondido)
-      //   enviarPresionBase();
+      while (!haRespondido)
+        enviarPresionBase();
       inicializado = true;
     }
   }
   else
   {
-    if (cicloAht == true)
+    if (cicloAht == 1)
+      beginMeasurementAht();
+
+    if (cicloAht == 2)
     {
-      ahtValue = aht10.readHumidity();
-      cicloAht = false;
+      readHumidityAht();
+      cicloAht = 0;
     }
-    
     if (transmit == true)
     {
       packetSending();
@@ -115,6 +126,16 @@ void loop()
         isFreeFall = true;
       leerMpu = false;
     }
+    if (escritura == true)
+    {
+      archivo = SD.open("datos.csv", FILE_WRITE);
+
+      if (archivo)
+      {
+        
+      }
+      archivo.close();
+    }
   }
 }
 
@@ -124,51 +145,14 @@ void packetSending()
   // Send LoRa packet to receiver
   digitalWrite(LED_BUILTIN, LOW);
   LoRa.beginPacket();
-  LoRa.print("gvie"); // Cadena de comienzo de packet
-  LoRa.print(",");
-  LoRa.print("1"); // Tipo de mensaje, este es un mensaje no confirmable
-  LoRa.print(",");
-  LoRa.print("1"); // Codigo de solicitud/respuesta (2 bytes) Primer byte, escribir datos
-  LoRa.print("4"); // Segundo Byte, Telemetria
-  LoRa.print(",");
-  LoRa.print(T); // Datos
-  LoRa.print(",");
-  LoRa.print(P);
-  LoRa.print(",");
-  LoRa.print(giroX);
-  LoRa.print(",");
-  LoRa.print(giroY);
-  LoRa.print(",");
-  LoRa.print(giroZ);
-  LoRa.print(",");
-  LoRa.print(accX);
-  LoRa.print(",");
-  LoRa.print(accY);
-  LoRa.print(",");
-  LoRa.print(accZ);
-  LoRa.print(",");
-  LoRa.print(batteryLevel);
-  LoRa.print(",");
-  LoRa.print(tiempoMision);
-  LoRa.print(",");
+  LoRa.print(String("gvie,1,14," + String(T) + "," + String(P) + "," + String(giroX) + "," + String(giroY) + "," + String(giroZ) + "," + String(accX) +  "," +  String(accY) + "," + String(accZ) + "," + String(batteryLevel) + "," + String(tiempoMision) + "," + String(isFreeFall) + "," + String(MQ135) + "," + String(ahtValue)));
   if (isFreeFall)
   {
-    LoRa.print(isFreeFall);
     isFreeFall = false;
   }
-  else
-    LoRa.print("0");
-  LoRa.print(",");
-  LoRa.print(MQ135);
-  LoRa.print(",");
-  LoRa.print(ahtValue);
   LoRa.endPacket(true);
   // LoRa.receive();
   digitalWrite(LED_BUILTIN, HIGH);
-  // Volver a 0 para que no haga overflow
-  if (pktNumber >= 65500)
-    pktNumber = 0;
-  pktNumber++;
 }
 
 void onReceive(int packetSize)
@@ -320,12 +304,15 @@ void readSensors()
   else
   {
     readAht++;
+    if (readAht == 1)
+      cicloAht++;
+
+    if (readAht == 16)
+      cicloAht++;
+
     if (readAht == 400)
-    {
-      cicloAht = true;
       readAht = 0;
-    }
-    
+
     switch (disparoMedicion)
     {
     case 0:
@@ -350,16 +337,44 @@ void readSensors()
       break;
 
     case 3:
-      // status = pressure.getPressure(P, T);
+      status = pressure.getPressure(P, T);
       disparoMedicion++;
       break;
 
     default:
-      ahtValue = aht10.readHumidity(AHTXX_USE_READ_DATA);
       disparoMedicion = false;
       break;
     }
   }
+}
+
+void beginMeasurementAht()
+{
+  Wire.beginTransmission(0x38);
+
+  Wire.write(AHTXX_START_MEASUREMENT_REG);      // send measurement command, strat measurement
+  Wire.write(AHTXX_START_MEASUREMENT_CTRL);     // send measurement control
+  Wire.write(AHTXX_START_MEASUREMENT_CTRL_NOP); // send measurement NOP control
+
+  Wire.endTransmission(true);
+}
+
+void readHumidityAht()
+{
+  Wire.requestFrom(0x38, 7, (uint8_t) true); // read n-byte to "wire.h" rxBuffer, true-send stop after transmission
+
+  for (uint8_t i = 0; i < 7; i++)
+  {
+    _rawData[i] = Wire.read();
+  }
+
+  humidity = _rawData[1]; // 20-bit raw humidity data
+  humidity <<= 8;
+  humidity |= _rawData[2];
+  humidity <<= 4;
+  humidity |= _rawData[3] >> 4;
+
+  ahtValue = ((float)humidity / 0x100000) * 100;
 }
 
 void leerGyro() // Se toman los datos del sensor MPU
@@ -421,7 +436,8 @@ void timerSetup()
   // Timer1, lectura de temperatura y transmision
   Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, Timer1Handler);
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin); // Intervalo de timer para los ciclos de lectura de sensor
-  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);   // Intervalo de timer para la transmision de datos a la ET
+  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);
+  // ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para la transmision de datos a la ET
 }
 
 void mpuSetup()
@@ -465,8 +481,6 @@ void aht10Setup()
       reportarError("Error iniciando el AHT10");
     }
   }
-  // aht10.readTemperature();
-  // ahtValue = aht10.readHumidity(AHTXX_USE_READ_DATA);
 }
 
 void transmitir()
@@ -486,4 +500,8 @@ void sensorsBegin()
 void readMPU()
 {
   leerMpu = true; // Comienza la lectura del mpu
+}
+
+void escribirArchivo()
+{
 }
