@@ -6,23 +6,31 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <MPU6050_light.h>
+#include <AHTxx.h>
 
-SFE_BMP180 pressure;
+SFE_BMP180 bmp;
 MPU6050 mpu(Wire);
+AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 
-double baseline;
-double T, P, A, giroX, giroY, giroZ, accX, accY, accZ;
+float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
+double Temp, Pres, baseline;
 unsigned int pktNumber = 0;
-bool transmit = 0, sensors = 0, bmpIsInit = 0, actualizarMpu = 0, leerMpu = 0;
-int disparoMedicion = 0, batteryLevel;
+bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true, escritura = false;
+int disparoMedicion = 0, batteryLevel, MQ135, readAht = 0, cicloAht = 0;
+uint32_t tiempoMision = 0, empezarMision = 0, humidity;
+String dataEnviar = "", dataRecibir;
+uint8_t _rawData[7] = {0, 0, 0, 0, 0, 0, 0}; //{status, RH, RH, RH+T, T, T, CRC}, CRC for AHT2x only
 
 #define HW_TIMER_INTERVAL_MS 1
-
 #define NSS PA15
 #define RST PB3
-#define IRQ PA0
-#define INTpin PB8
-#define BAT PA1
+#define IRQ PA1
+#define INTpin PA2
+#define DRDY PA11
+#define BAT PA0
+#define MainS PA12
+#define AQS PA4
+#define SPI2_NSS_PIN PB12
 
 // Init STM32 timer TIM1
 STM32Timer Timer1(TIM1);
@@ -31,8 +39,9 @@ STM32_ISR_Timer ISR_Timer1_Temp;
 
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
+#define TIMER_INTERVAL_3 23L  // Timer3 salta cada 23 ms
 
-void TimerHandler()
+void Timer1Handler()
 {
   ISR_Timer1_Temp.run();
 }
@@ -43,81 +52,188 @@ void setup()
   Serial.begin(9600);
   Wire.begin();
   pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
+  pinMode(MainS, OUTPUT);
   pinMode(BAT, INPUT);
   pinMode(INTpin, INPUT);
+  pinMode(AQS, INPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+  digitalWrite(MainS, HIGH);
 
   loraSetup(); // Setup modulo lora
-
-  bmpSetup(); // Setup modulo de temperatura
-
-  mpuSetup(); // Setup modulo de giroscopio
 
   timerSetup(); // Setup de interrupciones de timer
 
   attachInterrupt(digitalPinToInterrupt(INTpin), readMPU, FALLING);
+  LoRa.receive();
 }
 
 void loop()
 {
-  if (transmit == 1)
+  if (!inicializado)
   {
-    packetSending();
-    transmit = 0;
+    if (inicializacion)
+    {
+      digitalWrite(MainS, HIGH);
+      empezarMision = millis();
+      bmpSetup(); // Setup modulo de temperatura
+      aht10Setup();
+      // mpuSetup(); // Setup modulo de giroscopio
+      while (!haRespondido)
+        enviarPresionBase();
+      inicializado = true;
+    }
   }
-  if (sensors == 1)
+  else
   {
-    readSensors();
-    sensors = 0;
-  }
-  if (actualizarMpu == 1)
-  {
-    mpu.update();
-    actualizarMpu = 0;
-  }
+    if (cicloAht == 1)
+      beginMeasurementAht();
 
-  if (leerMpu == 1)
-  {
-    leerGyro();
-    leerMpu = 0;
+    if (cicloAht == 2)
+    {
+      readHumidityAht();
+      cicloAht = 0;
+    }
+    if (transmit == true)
+    {
+      packetSending();
+      transmit = false;
+    }
+    if (sensors == true)
+    {
+      readSensors();
+      sensors = false;
+    }
+    if (actualizarMpu == true)
+    {
+      // mpu.update();
+      actualizarMpu = false;
+    }
+    if (leerMpu == true)
+    {
+      if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
+        leerGyro();
+      if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x80))
+        isFreeFall = true;
+      leerMpu = false;
+    }
   }
 }
 
 void packetSending()
 {
+  tiempoMision = (millis() - empezarMision);
   // Send LoRa packet to receiver
-  digitalWrite(PC13, LOW);
+  digitalWrite(LED_BUILTIN, LOW);
   LoRa.beginPacket();
-  LoRa.print("gVIE"); // Cadena de comienzo de packet
-  LoRa.print(",");
-  LoRa.print(T);
-  LoRa.print(",");
-  LoRa.print(P);
-  LoRa.print(",");
-  LoRa.print(giroX);
-  LoRa.print(",");
-  LoRa.print(giroY);
-  LoRa.print(",");
-  LoRa.print(giroZ);
-  LoRa.print(",");
-  LoRa.print(accX);
-  LoRa.print(",");
-  LoRa.print(accY);
-  LoRa.print(",");
-  LoRa.print(accZ);
-  LoRa.print(",");
-  LoRa.print(batteryLevel);
-  LoRa.print(",");
-  LoRa.print(baseline);
-  LoRa.print(",");
-  LoRa.print(millis());
-  LoRa.print(",");
-  LoRa.print("gVIE"); // Cadena de fin de packet
-  LoRa.endPacket();
-  digitalWrite(PC13, HIGH);
-  // Volver a 0 para que no haga overflow
-  if (pktNumber >= 65500)
-    pktNumber = 0;
-  pktNumber++;
+  LoRa.print(String("gvie,1,14," + String(Temp) + "," + String(Pres) + "," + String(giroX) + "," + String(giroY) + "," + String(giroZ) + "," + String(accX) +  "," +  String(accY) + "," + String(accZ) + "," + String(batteryLevel) + "," + String(tiempoMision) + "," + String(isFreeFall) + "," + String(MQ135) + "," + String(ahtValue)));
+  if (isFreeFall)
+  {
+    isFreeFall = false;
+  }
+  LoRa.endPacket(true);
+  // LoRa.receive();
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void onReceive(int packetSize)
+{
+  String LoRaData = LoRa.readString();
+
+  int confirmacion0 = LoRaData.indexOf(',');            // Header
+  int tipo1 = LoRaData.indexOf(',', confirmacion0 + 1); // Tipo de mensaje
+  int codigo2 = LoRaData.indexOf(',', tipo1 + 1);       // Codigo de solicitud/respuesta
+
+  String strconf1 = LoRaData.substring(0, confirmacion0);
+  String tipomsg = LoRaData.substring(confirmacion0 + 1, tipo1);
+  String codigomsg = LoRaData.substring(tipo1 + 1, codigo2);
+
+  if (strconf1 == "gvie")
+  { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo
+
+    switch (tipomsg.toInt()) // Puede ser 0, 1, 2, o 3
+    {
+    case 0:
+      responder = true; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
+      break;
+
+    case 1:
+      responder = 0; // Se espera que el mensaje sea de tipo no confirmable
+      break;
+
+    case 2:
+      haRespondido = true; // Significa que el paquete enviado es para confirmar un comando
+      break;
+
+    case 3:
+      noPudoProcesar = true; // Significa que el paquete enviado pudo ser procesado
+      break;
+
+    default:
+      break;
+    }
+
+    if (!haRespondido && !noPudoProcesar)
+    {
+      switch (codigomsg.toInt())
+      {
+      case 1:
+        escribirDatos = true; // El mensaje recibido es para escribir datos
+        break;
+
+      case 2:
+        ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
+        break;
+
+      case 3:
+        NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
+        break;
+
+      case 10:
+        inicializacion = true; // El mensaje recibido es para comenzar la inicializacion de datos
+        break;
+
+      default:
+        break;
+      }
+    }
+
+    if (responder)
+    {
+      confirmacion(dataEnviar, codigomsg);
+      responder = false;
+    }
+  }
+}
+
+void confirmacion(String datos, String codigomsg)
+{
+  digitalWrite(LED_BUILTIN, HIGH);
+  LoRa.beginPacket();
+  LoRa.print(String("gvie,2," + String(codigomsg) + "," + String(datos)));
+  LoRa.endPacket(true);
+  LoRa.receive();
+  digitalWrite(LED_BUILTIN, LOW);
+}
+
+void enviarPresionBase()
+{
+  if (enviarDevuelta)
+  {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    LoRa.beginPacket();
+    LoRa.print(String("gvie,0,10," + String(baseline)));
+    LoRa.endPacket(true);
+    LoRa.receive();
+    enviarDevuelta = false;
+  }
+}
+
+void reportarError(String data)
+{
+  LoRa.beginPacket();
+  LoRa.print(String("gvie,1,4X," + String(data)));
+  LoRa.endPacket(true);
+  LoRa.receive();
 }
 
 void readSensors()
@@ -126,61 +242,102 @@ void readSensors()
   char status;
   if (!bmpIsInit)
   {
-    status = pressure.startTemperature();
+    status = bmp.startTemperature();
     if (status != 0)
     {
       // Espera que termine la medicion de Temperatura
       delay(status);
-      status = pressure.getTemperature(T);
+      status = bmp.getTemperature(Temp);
       if (status != 0)
       {
         // Comienza medicion de Presion
-        status = pressure.startPressure(3);
+        status = bmp.startPressure(3);
         if (status != 0)
         {
           // Espera que termine la medicion de Presion
           delay(status);
-          status = pressure.getPressure(P, T);
+          status = bmp.getPressure(Pres, Temp);
         }
       }
     }
   }
   else
   {
-    actualizarMpu = 1;
-    batteryLevel = analogRead(BAT);
+    readAht++;
+    if (readAht == 1)
+      cicloAht++;
+
+    if (readAht == 16)
+      cicloAht++;
+
+    if (readAht == 400)
+      readAht = 0;
+
     switch (disparoMedicion)
     {
     case 0:
-      status = pressure.startTemperature();
+      status = bmp.startTemperature();
+      batteryLevel = analogRead(BAT);
+      MQ135 = analogRead(AQS);
+      actualizarMpu = true;
       if (status != 0)
         disparoMedicion++;
       break;
 
     case 1:
-      status = pressure.getTemperature(T);
+      status = bmp.getTemperature(Temp);
       disparoMedicion++;
       break;
 
     case 2:
-      status = pressure.startPressure(0);
+      actualizarMpu = true;
+      status = bmp.startPressure(0);
       if (status != 0)
         disparoMedicion++;
       break;
 
     case 3:
-      status = pressure.getPressure(P, T);
+      status = bmp.getPressure(Pres, Temp);
       disparoMedicion++;
       break;
 
     default:
-      disparoMedicion = 0;
+      disparoMedicion = false;
       break;
     }
   }
 }
 
-void leerGyro()
+void beginMeasurementAht()
+{
+  Wire.beginTransmission(0x38);
+
+  Wire.write(AHTXX_START_MEASUREMENT_REG);      // send measurement command, strat measurement
+  Wire.write(AHTXX_START_MEASUREMENT_CTRL);     // send measurement control
+  Wire.write(AHTXX_START_MEASUREMENT_CTRL_NOP); // send measurement NOP control
+
+  Wire.endTransmission(true);
+}
+
+void readHumidityAht()
+{
+  Wire.requestFrom(0x38, 7, (uint8_t) true); // read n-byte to "wire.h" rxBuffer, true-send stop after transmission
+
+  for (uint8_t i = 0; i < 7; i++)
+  {
+    _rawData[i] = Wire.read();
+  }
+
+  humidity = _rawData[1]; // 20-bit raw humidity data
+  humidity <<= 8;
+  humidity |= _rawData[2];
+  humidity <<= 4;
+  humidity |= _rawData[3] >> 4;
+
+  ahtValue = ((float)humidity / 0x100000) * 100;
+}
+
+void leerGyro() // Se toman los datos del sensor MPU
 {
   accX = mpu.getAccX();
   accY = mpu.getAccY();
@@ -205,68 +362,101 @@ void loraSetup()
   digitalWrite(RST, HIGH);
   LoRa.setPins(NSS, RST, IRQ);
   // Inicializar módulo LoRa
-  while (!LoRa.begin(LORA_FREQUENCY))
-    ;
+  while (!LoRa.begin(LORA_FREQUENCY));
   LoRa.setTxPower(LORA_POWER);
   LoRa.setSpreadingFactor(LORA_SPREAD_FACTOR);
   LoRa.setSignalBandwidth(LORA_SIG_BANDWIDTH);
   LoRa.setCodingRate4(LORA_CODING_RATE);
   LoRa.setSyncWord(LORA_SYNC_WORD);
+
+  LoRa.onReceive(onReceive);
+  LoRa.receive();
 }
 
 void bmpSetup()
 {
-  // Inicializar el BMP180
-  // Si el BMP180 no inicializa, no arranca la placa y el led onboard queda encendido!
-  digitalWrite(LED_BUILTIN, LOW);
-  do
-  {
-    delay(100);
-    if (pressure.begin())
-      readSensors();
-    baseline = P;
-    bmpIsInit = true;
-    digitalWrite(LED_BUILTIN, HIGH);
-  } // LoRa OK!, Iniciando BMP180, BMP180 inicio OK, baseline
-  while (!bmpIsInit);
+  errorCheck(3);
 }
 
 void timerSetup()
 {
   // Timer1, lectura de temperatura y transmision
-  Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler);
-  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);
+  Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, Timer1Handler);
+  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin); // Intervalo de timer para los ciclos de lectura de sensor
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);
+  // ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para la transmision de datos a la ET
 }
 
 void mpuSetup()
 {
-  byte status = mpu.begin();
+  errorCheck(1);
 
-  while (status != 0)
-  {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-    // stop everything if could not connect to MPU6050
-    delay(1000);
-  }
-
-  mpu.writeData(0x38, 0x01);
+  mpu.writeData(0x38, 0x81);
+  mpu.writeData(0x1D, 17);
+  mpu.writeData(0x1E, 2);
   mpu.writeData(0x37, 0xB0);
 
   mpu.calcOffsets(true, true); // gyro and accelero
 }
 
+void aht10Setup()
+{
+  errorCheck(2);
+}
+
 void transmitir()
 {
-  transmit = 1;
+  transmit = true; // Se transmiten datos a la estacion terrena
+  if (!haRespondido)
+  {
+    enviarDevuelta = !enviarDevuelta; // Si han pasado 1000 ms, y no se respondio al comando, se vuelve a enviar
+  }
 }
 
 void sensorsBegin()
 {
-  sensors = 1;
+  sensors = true; // Se completa un ciclo de la lectura de sensores
 }
 
 void readMPU()
 {
-  leerMpu = 1;
+  leerMpu = true; // Comienza la lectura del mpu
+}
+
+void escribirArchivo()
+{
+}
+
+void errorCheck(char device){     //Resets de device if any I2C device was unable to begin
+  int deberiaResetear = 0;
+  bool status = checkSensorStatus(device);
+  while (status != 0)
+  {
+    digitalWrite(LED_BUILTIN, !LED_BUILTIN);
+    // stop everything if could not connect to I2C device
+    delay(1000);
+    deberiaResetear++;
+    if (deberiaResetear >= 2)
+    {
+      reportarError(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
+      status = checkSensorStatus(device);
+    }
+  }
+}
+
+bool checkSensorStatus(char device){  //Checks for begin faliure on the selected device
+  switch (device){
+    case 1:
+      return mpu.begin();           //return begin status of MPU6050
+      break;
+    case 2:
+      return aht10.begin();         //return begin status of AHT10
+      break;
+    case 3:
+      return bmp.begin();           //return begin status of bmp
+      break;
+    case 4:
+                                    //return begin status of "brujula"
+      break;
+  }
 }
