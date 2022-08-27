@@ -7,23 +7,43 @@
 #include <SPI.h>
 #include <MPU6050_light.h>
 #include <AHTxx.h>
-#include <SD.h>
+#include <SdFat.h>
 
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 
+const uint8_t SOFT_MISO_PIN = PB14;
+const uint8_t SOFT_MOSI_PIN = PB15;
+const uint8_t SOFT_SCK_PIN = PB13;
+
+const uint8_t SD_CS_PIN = PB12;
+
 double T, P, A, giroX, giroY, giroZ, accX, accY, accZ, baseline, ahtValue;
+
+SPIClass SPI_1(PA7, PA6, PA5);
+
+// SdFat software SPI template
+SoftSpiDriver<SOFT_MISO_PIN, SOFT_MOSI_PIN, SOFT_SCK_PIN> softSpi;
+// Speed argument is ignored for software SPI.
+#if ENABLE_DEDICATED_SPI
+#define SD_CONFIG SdSpiConfig(SD_CS_PIN, DEDICATED_SPI, SD_SCK_MHZ(0), &softSpi)
+#else // ENABLE_DEDICATED_SPI
+#define SD_CONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(0), &softSpi)
+#endif // ENABLE_DEDICATED_SPI
+
 unsigned int pktNumber = 0;
 bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false;
 bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true, escritura = false;
 int disparoMedicion = 0, batteryLevel, MQ135, readAht = 0, cicloAht = 0;
 uint32_t tiempoMision = 0, empezarMision = 0, humidity;
 String dataEnviar = "", dataRecibir;
-File archivo;
 uint8_t _rawData[7] = {0, 0, 0, 0, 0, 0, 0}; //{status, RH, RH, RH+T, T, T, CRC}, CRC for AHT2x only
 
 #define HW_TIMER_INTERVAL_MS 1
+
+SdFs sd;
+FsFile archivo;
 
 #define NSS PA15
 #define RST PB3
@@ -62,12 +82,7 @@ void setup()
   digitalWrite(LED_BUILTIN, HIGH);
   digitalWrite(MainS, HIGH);
 
-  //SPI.setMISO(PB14);
-  //SPI.setMOSI(PB15);
-  //SPI.setSCLK(PB13);
-
-  //archivo = SD.open("datos.csv", FILE_WRITE);
-  //archivo.close();
+  sdCardSetup();
 
   loraSetup(); // Setup modulo lora
 
@@ -87,7 +102,7 @@ void loop()
       empezarMision = millis();
       bmpSetup(); // Setup modulo de temperatura
       aht10Setup();
-      // mpuSetup(); // Setup modulo de giroscopio
+      mpuSetup(); // Setup modulo de giroscopio
       while (!haRespondido)
         enviarPresionBase();
       inicializado = true;
@@ -115,7 +130,7 @@ void loop()
     }
     if (actualizarMpu == true)
     {
-      // mpu.update();
+      //mpu.update();
       actualizarMpu = false;
     }
     if (leerMpu == true)
@@ -128,13 +143,12 @@ void loop()
     }
     if (escritura == true)
     {
-      archivo = SD.open("datos.csv", FILE_WRITE);
-
-      if (archivo)
-      {
-        
-      }
+      tiempoMision = (millis() - empezarMision);
+      archivo.open("datos1.csv", O_AT_END);
+      archivo.println("Hola");
       archivo.close();
+      // archivo.println(String("gvie,1,14," + String(T) + "," + String(P) + "," + String(giroX) + "," + String(giroY) + "," + String(giroZ) + "," + String(accX) + "," + String(accY) + "," + String(accZ) + "," + String(batteryLevel) + "," + String(tiempoMision) + "," + String(isFreeFall) + "," + String(MQ135) + "," + String(ahtValue)));
+      escritura = false;
     }
   }
 }
@@ -145,7 +159,7 @@ void packetSending()
   // Send LoRa packet to receiver
   digitalWrite(LED_BUILTIN, LOW);
   LoRa.beginPacket();
-  LoRa.print(String("gvie,1,14," + String(T) + "," + String(P) + "," + String(giroX) + "," + String(giroY) + "," + String(giroZ) + "," + String(accX) +  "," +  String(accY) + "," + String(accZ) + "," + String(batteryLevel) + "," + String(tiempoMision) + "," + String(isFreeFall) + "," + String(MQ135) + "," + String(ahtValue)));
+  LoRa.print(String("gvie,1,14," + String(T) + "," + String(P) + "," + String(giroX) + "," + String(giroY) + "," + String(giroZ) + "," + String(accX) + "," + String(accY) + "," + String(accZ) + "," + String(batteryLevel) + "," + String(tiempoMision) + "," + String(isFreeFall) + "," + String(MQ135) + "," + String(ahtValue)));
   if (isFreeFall)
   {
     isFreeFall = false;
@@ -229,13 +243,7 @@ void confirmacion(String datos, String codigomsg)
 {
   digitalWrite(LED_BUILTIN, HIGH);
   LoRa.beginPacket();
-  LoRa.print("gvie"); // Cadena de comienzo de packet
-  LoRa.print(",");
-  LoRa.print("2"); // Tipo de mensaje, este es un mensaje respondiendo a un comando
-  LoRa.print(",");
-  LoRa.print(codigomsg); // Codigo del comando
-  LoRa.print(",");
-  LoRa.print(datos); // Si es necesario, se ingresan datos
+  LoRa.print(String("gvie,2," + String(codigomsg) + "," + String(datos)));
   LoRa.endPacket(true);
   LoRa.receive();
   digitalWrite(LED_BUILTIN, LOW);
@@ -247,14 +255,7 @@ void enviarPresionBase()
   {
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     LoRa.beginPacket();
-    LoRa.print("gvie"); // Cadena de comienzo de packet
-    LoRa.print(",");
-    LoRa.print("0"); // Tipo de mensaje, este es un mensaje confirmable
-    LoRa.print(",");
-    LoRa.print("1"); // Codigo de solicitud/respuesta (2 bytes) Primer byte, escribir datos
-    LoRa.print("0"); // Segundo Byte, es de inicializacion
-    LoRa.print(",");
-    LoRa.print(baseline);
+    LoRa.print(String("gvie,0,10," + String(baseline)));
     LoRa.endPacket(true);
     LoRa.receive();
     enviarDevuelta = false;
@@ -264,14 +265,7 @@ void enviarPresionBase()
 void reportarError(String data)
 {
   LoRa.beginPacket();
-  LoRa.print("gvie"); // Cadena de comienzo de packet
-  LoRa.print(",");
-  LoRa.print("1"); // Tipo de mensaje, este es un mensaje no confirmable
-  LoRa.print(",");
-  LoRa.print("4"); // Codigo de solicitud/respuesta (2 bytes) Primer byte, se reporta un error
-  LoRa.print("X"); // Segundo Byte, no se toma en cuenta
-  LoRa.print(",");
-  LoRa.print(data); // Se informa cual fue el error
+  LoRa.print(String("gvie,1,4X," + String(data)));
   LoRa.endPacket(true);
   LoRa.receive();
 }
@@ -419,8 +413,13 @@ void bmpSetup()
   // Inicializar el BMP180
   // Si el BMP180 no inicializa, no arranca la placa y el led onboard queda encendido!
   digitalWrite(LED_BUILTIN, LOW);
+  int deberiaResetear = 0;
   do
   {
+    deberiaResetear++;
+    if(deberiaResetear >= 20){
+      reportarError("Error iniciando el bmp180");
+    }
     delay(100);
     if (pressure.begin())
       readSensors();
@@ -437,7 +436,7 @@ void timerSetup()
   Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, Timer1Handler);
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin); // Intervalo de timer para los ciclos de lectura de sensor
   ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);
-  // ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para la transmision de datos a la ET
+  ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para la transmision de datos a la ET
 }
 
 void mpuSetup()
@@ -469,7 +468,6 @@ void mpuSetup()
 void aht10Setup()
 {
   int deberiaResetear = 0;
-
   while (!aht10.begin())
   {
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
@@ -481,6 +479,18 @@ void aht10Setup()
       reportarError("Error iniciando el AHT10");
     }
   }
+}
+
+void sdCardSetup()
+{
+  if (!sd.begin(SD_CONFIG))
+    sd.initErrorHalt();
+
+  if (!archivo.open("datos1.csv", O_RDWR | O_CREAT))
+  {
+    sd.errorHalt(F("open failed"));
+  }
+  archivo.close();
 }
 
 void transmitir()
@@ -504,4 +514,5 @@ void readMPU()
 
 void escribirArchivo()
 {
+  escritura = true;
 }
