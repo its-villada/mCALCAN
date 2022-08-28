@@ -6,37 +6,35 @@
 #include <STM32TimerInterrupt.h>
 #include <STM32_ISR_Timer.h>
 #include <STM32_ISR_Timer.hpp>
-#include <SdFat.h>
+//#include <SdFat.h>
+#include <SD.h>
 #include <Wire.h>
 
-#define SERIAL_BAUDRATE 9600     // Velocidad del Puerto Serie
-#define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
-#define LORA_SYNC_WORD 0xDE      // Byte value to use as the sync word, defaults to 0x12
-#define LORA_POWER 17            // TX power in dB, defaults to 17. Supported values are 2 to 20 for PA_OUTPUT_PA_BOOST_PIN, and 0 to 14 for PA_OUTPUT_RFO_PIN.
-#define LORA_SPREAD_FACTOR 7     // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
-#define LORA_SIG_BANDWIDTH 125E3 // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15. 6E3, 20.8E3, 31.25E3, 41.7E3, 62.5E3, 125E3, 250E3, and 500E3
-#define LORA_CODING_RATE 5       // Denominator of the coding rate, defaults to 5. Supported values are between 5 and 8, these correspond to coding rates of 4/5 and 4/8. The coding rate numerator is fixed at 4.
-#define RST PB3
-#define IRQ PA1
-#define INTpin PA2
-#define DRDY PA11
-#define BAT PA0
-#define MainS PA12
-#define AQS PA4
-#define SPI2_NSS_PIN PB12
+#define SERIAL_BAUDRATE 9600        // Velocidad del Puerto Serie
+#define LORA_FREQUENCY 915000000    // Frecuencia en Hz a la que se quiere transmitir.
+#define LORA_SYNC_WORD 0xDE         // Byte value to use as the sync word, defaults to 0x12
+#define LORA_POWER 17               // TX power in dB, defaults to 17. Supported values are 2 to 20 for PA_OUTPUT_PA_BOOST_PIN, and 0 to 14 for PA_OUTPUT_RFO_PIN.
+#define LORA_SPREAD_FACTOR 7        // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
+#define LORA_SIG_BANDWIDTH 125E3    // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15. 6E3, 20.8E3, 31.25E3, 41.7E3, 62.5E3, 125E3, 250E3, and 500E3
+#define LORA_CODING_RATE 5          // Denominator of the coding rate, defaults to 5. Supported values are between 5 and 8, these correspond to coding rates of 4/5 and 4/8. The coding rate numerator is fixed at 4.
+#define RST PB3                     // Pin Reset del transciver LoRa
+#define IRQ PA1                     // Pin DIO0 del transciver LoRa
+#define NSS PA15                    // Pin CS del transciver LoRa
+#define INTpin PA2                  // Pin de interrupcion del MPU6050
+#define DRDY PA11                   // Pin de interrupcion del GY-273
+#define BAT PA0                     // Pin de tension de bateria
+#define MainS PA12                  // Pin Sensors enable
+#define AQS PA4                     // Pin del sensor MQ-135
 #define HW_TIMER_INTERVAL_MS 1
-#define SD_CONFIG SdSpiConfig(PB12, DEDICATED_SPI, SD_SCK_MHZ(0), &mySPI_2) // ENABLE_DEDICATED_SPI
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
 #define TIMER_INTERVAL_3 23L  // Timer3 salta cada 23 ms
+#define TIMER_INTERVAL_4 1L   // TIMER4 salta cada 5 ms
 #define comma ','
 
-SdFat sd2;
-SdFile archivo2;
-
+File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
-SPIClass SPI_1(PA7, PA6, PA5);
 SPIClass mySPI_2 (PB15, PB14, PB13);
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
@@ -134,13 +132,13 @@ void loop() {
             leerMpu = false;
         }
         if (escritura == true) {
-            tiempoMision = (millis() - empezarMision);
-            if (!archivo2.open("datos1.csv", O_RDWR | O_CREAT | O_AT_END)) {
-                reportarError("Fallo al abrir archivo de MicroSD");
-            } else {
-                archivo2.println(String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
-                archivo2.close();
+            //tiempoMision = (millis() - empezarMision);
+            if (csvTelemetry){
+                csvTelemetry.println(String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
+                csvTelemetry.flush();
                 escritura = false;
+            } else {
+                reportarError("Fallo al abrir archivo de MicroSD");
             }
         }
     }
@@ -153,6 +151,7 @@ void timerSetup() {
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);    // Intervalo de timer para los ciclos de lectura de sensor
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);      // Intervalo de timer para la transmision de datos a la ET
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para escribir a la microsd
+    ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_4, millisMision);
 }
 
 // Inicializacion del LoRa
@@ -200,11 +199,11 @@ void aht10Setup() {
 
 // Inicializacion de la MicroSD
 void sdCardSetup() {
-    if (!sd2.begin(SD_CONFIG)) {
+    if (!SD.begin(SS2)) {
         reportarError("No se pudo iniciar MicroSD1");
-        while (1)
-            ;
-    }
+        while (1);
+  }
+    csvTelemetry = SD.open("mCALCAN.csv", FILE_WRITE);
 }
 
 // Subortina ISR para interrupciones
@@ -232,7 +231,7 @@ void transmitir() {
 
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
 void telemetrySend() {
-    tiempoMision = (millis() - empezarMision);
+    //tiempoMision = (millis() - empezarMision);
     LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
     if (isFreeFall) {
         isFreeFall = false;
@@ -467,4 +466,9 @@ bool checkSensorStatus(char device) {
         // return begin status of "brujula"
         break;
     }
+}
+
+void millisMision(){
+    if (inicializado)
+        tiempoMision++;
 }
