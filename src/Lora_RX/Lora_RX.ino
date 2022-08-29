@@ -278,7 +278,7 @@ void reset()
     LoRa.print(",");
     LoRa.print("1");
     LoRa.print(",");
-    LoRa.print("3X");
+    LoRa.print("37");
     LoRa.endPacket(true);
     LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
