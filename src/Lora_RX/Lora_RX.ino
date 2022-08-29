@@ -31,6 +31,8 @@ bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDa
 
 String LoRaData, presionBase, data = "";
 
+String tiempoDeTransmision, tiempoAnterior;
+
 int pktNumber = 0;
 
 void (*resetFunc)(void) = 0;
@@ -107,6 +109,10 @@ void onReceive(int packetSize)
             noPudoProcesar = true; // Significa que el paquete enviado pudo ser procesado
             break;
 
+        case 4:
+            error = true;
+            break;
+
         default:
             break;
         }
@@ -116,20 +122,16 @@ void onReceive(int packetSize)
             switch (codigomsg.toInt())
             {
 
-            case 1:
+            case 17:
                 escribirDatos = true; // El mensaje recibido es para escribir datos
                 break;
 
-            case 2:
+            case 27:
                 ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
                 break;
 
-            case 3:
+            case 37:
                 resetFunc(); // El mensaje recibido es para resetear el sistema
-                break;
-
-            case 4:
-                error = true;
                 break;
 
             case 10:
@@ -138,6 +140,10 @@ void onReceive(int packetSize)
 
             case 14:
                 telemetria = true;
+                break;
+
+            case 77:
+                // Indefinido
                 break;
 
             default:
@@ -159,6 +165,7 @@ void onReceive(int packetSize)
             int indicador10 = LoRaData.indexOf(',', indicador9 + 1);
             int indicador11 = LoRaData.indexOf(',', indicador10 + 1);
             int indicador12 = LoRaData.indexOf(',', indicador11 + 1);
+            int indicador13 = LoRaData.indexOf(',', indicador12 + 1);
 
             String temperatura = LoRaData.substring(codigo2 + 1, indicador1);
 
@@ -180,6 +187,8 @@ void onReceive(int packetSize)
 
             String calidadDeAire = LoRaData.substring(indicador11 + 1, indicador12);
 
+            String humedad = LoRaData.substring(indicador12 + 1, indicador13);
+
             calidadDeAire = (calidadDeAire.toInt() - 282);
 
             altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
@@ -199,9 +208,12 @@ void onReceive(int packetSize)
             vel2 = vel2.toDouble() * 9.8066;
             vel3 = vel3.toDouble() * 9.8066;
 
+            tiempoDeTransmision = (tiempo.toDouble() - tiempoAnterior.toDouble());
+
             // Printeo de los datos recibidos
 
-            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat + "," + calidadDeAire);
+            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat + "," + calidadDeAire + "," + humedad + "%" + "," + tiempoDeTransmision);
+            tiempoAnterior = tiempo;
             // Apagar LED onboard
             digitalWrite(LED, LOW);
             telemetria = false;
