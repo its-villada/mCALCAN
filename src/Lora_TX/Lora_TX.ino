@@ -9,22 +9,22 @@
 #include <SD.h>
 #include <Wire.h>
 
-#define SERIAL_BAUDRATE 9600        // Velocidad del Puerto Serie
-#define LORA_FREQUENCY 915000000    // Frecuencia en Hz a la que se quiere transmitir.
-#define LORA_SYNC_WORD 0xDE         // Byte value to use as the sync word, defaults to 0x12
-#define LORA_POWER 17               // TX power in dB, defaults to 17. Supported values are 2 to 20 for PA_OUTPUT_PA_BOOST_PIN, and 0 to 14 for PA_OUTPUT_RFO_PIN.
-#define LORA_SPREAD_FACTOR 7        // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
-#define LORA_SIG_BANDWIDTH 125E3    // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15. 6E3, 20.8E3, 31.25E3, 41.7E3, 62.5E3, 125E3, 250E3, and 500E3
-#define LORA_CODING_RATE 5          // Denominator of the coding rate, defaults to 5. Supported values are between 5 and 8, these correspond to coding rates of 4/5 and 4/8. The coding rate numerator is fixed at 4.
-#define RST PB3                     // Pin Reset del transciver LoRa
-#define IRQ PA1                     // Pin DIO0 del transciver LoRa
-#define NSS PA15                    // Pin CS del transciver LoRa
-#define INTpin PA2                  // Pin de interrupcion del MPU6050
-#define DRDY PA11                   // Pin de interrupcion del GY-273
-#define BAT PA0                     // Pin de tension de bateria
-#define MainS PA12                  // Pin Sensors enable
-#define AQS PA4                     // Pin del sensor MQ-135
-#define buzzer 
+#define SERIAL_BAUDRATE 9600     // Velocidad del Puerto Serie
+#define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
+#define LORA_SYNC_WORD 0xDE      // Byte value to use as the sync word, defaults to 0x12
+#define LORA_POWER 17            // TX power in dB, defaults to 17. Supported values are 2 to 20 for PA_OUTPUT_PA_BOOST_PIN, and 0 to 14 for PA_OUTPUT_RFO_PIN.
+#define LORA_SPREAD_FACTOR 7     // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
+#define LORA_SIG_BANDWIDTH 125E3 // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15. 6E3, 20.8E3, 31.25E3, 41.7E3, 62.5E3, 125E3, 250E3, and 500E3
+#define LORA_CODING_RATE 5       // Denominator of the coding rate, defaults to 5. Supported values are between 5 and 8, these correspond to coding rates of 4/5 and 4/8. The coding rate numerator is fixed at 4.
+#define RST PB3                  // Pin Reset del transciver LoRa
+#define IRQ PA1                  // Pin DIO0 del transciver LoRa
+#define NSS PA15                 // Pin CS del transciver LoRa
+#define INTpin PA2               // Pin de interrupcion del MPU6050
+#define DRDY PA11                // Pin de interrupcion del GY-273
+#define BAT PA0                  // Pin de tension de bateria
+#define MainS PA12               // Pin Sensors enable
+#define AQS PA4                  // Pin del sensor MQ-135
+#define buzzer
 #define HW_TIMER_INTERVAL_MS 1
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
@@ -35,7 +35,7 @@
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
-SPIClass mySPI_2 (PB15, PB14, PB13);
+SPIClass mySPI_2(PB15, PB14, PB13);
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
@@ -49,8 +49,8 @@ String dataEnviar = "", dataRecibir;
 uint8_t _rawData[7] = {0, 0, 0, 0, 0, 0, 0}; //{status, RH, RH, RH+T, T, T, CRC}, CRC for AHT2x only
 
 void Timer1Handler();
+void onReceive(int);
 void telemetrySend();
-void onRecive(int);
 void enviarPresionBase();
 void reportarError(String);
 void readSensors();
@@ -71,7 +71,8 @@ void errorCheck(char);
 bool checkSensorStatus(char);
 void LoRa_Transmit(uint8_t, uint8_t, String);
 
-void setup() {
+void setup()
+{
     // put your setup code here, to run once:
     Serial.begin(9600);
     Wire.begin();
@@ -91,9 +92,12 @@ void setup() {
     LoRa.receive();
 }
 
-void loop() {
-    if (!inicializado) {
-        if (inicializacion) {
+void loop()
+{
+    if (!inicializado)
+    {
+        if (inicializacion)
+        {
             digitalWrite(MainS, HIGH);
             sdCardSetup();
             empezarMision = millis();
@@ -104,40 +108,51 @@ void loop() {
                 enviarPresionBase();
             inicializado = true;
         }
-    } else {
+    }
+    else
+    {
         if (cicloAht == 1)
             beginMeasurementAht();
 
-        if (cicloAht == 2) {
+        if (cicloAht == 2)
+        {
             readHumidityAht();
             cicloAht = 0;
         }
-        if (transmit == true) {
+        if (transmit == true)
+        {
             telemetrySend();
             transmit = false;
         }
-        if (sensors == true) {
+        if (sensors == true)
+        {
             readSensors();
             sensors = false;
         }
-        if (actualizarMpu == true) {
+        if (actualizarMpu == true)
+        {
             mpu.update();
             actualizarMpu = false;
         }
-        if (leerMpu == true) {
+        if (leerMpu == true)
+        {
             if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
                 leerMPU();
             if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x80))
                 isFreeFall = true;
             leerMpu = false;
         }
-        if (escritura == true) {
-            //tiempoMision = (millis() - empezarMision);
-            if (csvTelemetry){
+        if (escritura == true)
+        {
+            // tiempoMision = (millis() - empezarMision);
+            if (csvTelemetry)
+            {
                 csvTelemetry.println(String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
                 csvTelemetry.flush();
                 escritura = false;
-            } else {
+            }
+            else
+            {
                 reportarError("Fallo al abrir archivo de MicroSD");
                 escritura = false;
             }
@@ -146,17 +161,19 @@ void loop() {
 }
 
 // Inicializacion del Timer
-void timerSetup() {
+void timerSetup()
+{
     // Timer1, lectura de temperatura y transmision
     Timer1.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, Timer1Handler);
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);    // Intervalo de timer para los ciclos de lectura de sensor
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);      // Intervalo de timer para la transmision de datos a la ET
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para escribir a la microsd
-    //ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_4, millisMision);
+    // ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_4, millisMision);
 }
 
 // Inicializacion del LoRa
-void loraSetup() {
+void loraSetup()
+{
     pinMode(RST, OUTPUT);
     digitalWrite(RST, HIGH);
     LoRa.setPins(NSS, RST, IRQ);
@@ -174,7 +191,8 @@ void loraSetup() {
 }
 
 // Inicializacion del MPU6050
-void mpuSetup() {
+void mpuSetup()
+{
     errorCheck(1);
 
     mpu.writeData(0x38, 0x81);
@@ -185,7 +203,8 @@ void mpuSetup() {
 }
 
 // Inicializacion del BMP180
-void bmpSetup() {
+void bmpSetup()
+{
     errorCheck(3);
     if (pressure.begin())
         readSensors();
@@ -194,26 +213,32 @@ void bmpSetup() {
 }
 
 // Inicializacion del AHT10
-void aht10Setup() {
+void aht10Setup()
+{
     errorCheck(2);
 }
 
 // Inicializacion de la MicroSD
-void sdCardSetup() {
-    if (!SD.begin(SS2)) {
+void sdCardSetup()
+{
+    if (!SD.begin(SS2))
+    {
         reportarError("No se pudo iniciar MicroSD1");
-        while (1);
-  }
+        while (1)
+            ;
+    }
     csvTelemetry = SD.open("mCALCAN.csv", FILE_WRITE);
 }
 
 // Subortina ISR para interrupciones
-void Timer1Handler() {
+void Timer1Handler()
+{
     ISR_Timer1_Temp.run();
 }
 
 // Funcion estandard para enviar mensajes por LoRa con el Protocolo gVIE
-void LoRa_Transmit(uint8_t type, uint8_t reqs, String data){
+void LoRa_Transmit(uint8_t type, uint8_t reqs, String data)
+{
     digitalWrite(LED_BUILTIN, LOW);
     LoRa.beginPacket();
     LoRa.print(String("gvie," + String(type) + comma + String(reqs) + comma + data));
@@ -223,23 +248,28 @@ void LoRa_Transmit(uint8_t type, uint8_t reqs, String data){
 }
 
 // Funcion de transmision de datos a la Estacion Terrena
-void transmitir() {
+void transmitir()
+{
     transmit = true; // Se transmiten datos a la estacion terrena
-    if (!haRespondido) {
+    if (!haRespondido)
+    {
         enviarDevuelta = !enviarDevuelta; // Si han pasado 1000 ms, y no se respondio al comando, se vuelve a enviar
     }
 }
 
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
-void telemetrySend() {
+void telemetrySend()
+{
     LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(millis()) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
-    if (isFreeFall) {
+    if (isFreeFall)
+    {
         isFreeFall = false;
     }
 }
 
 // Funcion encargada de realizar las operaciones necesarias al recibir informacion por el modulo LoRa
-void onReceive(int packetSize) {
+void onReceive(int packetSize)
+{
     String LoRaData = LoRa.readString();
 
     // Busca y almacena la posicion (estilo arreglo) del caracter ingresado + X posiciones
@@ -252,8 +282,10 @@ void onReceive(int packetSize) {
     char tipomsg = (LoRaData.substring(confirmacion0 + 1, tipo1)).toInt();
     char codigomsg = (LoRaData.substring(tipo1 + 1, codigo2)).toInt();
 
-    if (strconf1 == "gvie") {      // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo
-        switch (tipomsg) { // Puede ser 0, 1, 2, o 3
+    if (strconf1 == "gvie")
+    { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo
+        switch (tipomsg)
+        { // Puede ser 0, 1, 2, o 3
         case 0:
             responder = true; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
             break;
@@ -274,17 +306,19 @@ void onReceive(int packetSize) {
             break;
         }
 
-        if (!haRespondido && !noPudoProcesar) {
-            switch (codigomsg) {
-            case 1:
+        if (!haRespondido && !noPudoProcesar)
+        {
+            switch (codigomsg)
+            {
+            case 17:
                 escribirDatos = true; // El mensaje recibido es para escribir datos
                 break;
 
-            case 2:
+            case 27:
                 ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
                 break;
 
-            case 3:
+            case 37:
                 NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
                 break;
 
@@ -292,12 +326,17 @@ void onReceive(int packetSize) {
                 inicializacion = true; // El mensaje recibido es para comenzar la inicializacion de datos
                 break;
 
+            case 77:
+                // Indefinido
+                break;
+
             default:
                 break;
             }
         }
 
-        if (responder) {
+        if (responder)
+        {
             LoRa_Transmit(2, codigomsg, dataEnviar);
             responder = false;
         }
@@ -305,44 +344,55 @@ void onReceive(int packetSize) {
 }
 
 // Funcion que envia la presion base a la Estacion Terrena
-void enviarPresionBase() {
-    if (enviarDevuelta) {
+void enviarPresionBase()
+{
+    if (enviarDevuelta)
+    {
         LoRa_Transmit(0, 10, String(baseline));
         enviarDevuelta = false;
     }
 }
 
 // Funcion basica de envio de errores a la Estacion Terrena
-void reportarError(String data) {
+void reportarError(String data)
+{
     LoRa_Transmit(4, 77, String(data));
 }
 
 // Se completa un ciclo de la lectura de sensores
-void sensorsBegin() {
+void sensorsBegin()
+{
     sensors = true;
 }
 
 // Funcion que lee todos los sensores a su maxima velocidad. Controlada por banderas de interrupcion
-void readSensors() {
+void readSensors()
+{
 
     char status;
-    if (!bmpIsInit) {
+    if (!bmpIsInit)
+    {
         status = pressure.startTemperature();
-        if (status != 0) {
+        if (status != 0)
+        {
             // Espera que termine la medicion de Temperatura
             delay(status);
             status = pressure.getTemperature(T);
-            if (status != 0) {
+            if (status != 0)
+            {
                 // Comienza medicion de Presion
                 status = pressure.startPressure(3);
-                if (status != 0) {
+                if (status != 0)
+                {
                     // Espera que termine la medicion de Presion
                     delay(status);
                     status = pressure.getPressure(P, T);
                 }
             }
         }
-    } else {
+    }
+    else
+    {
         readAht++;
         if (readAht == 1)
             cicloAht++;
@@ -353,7 +403,8 @@ void readSensors() {
         if (readAht == 400)
             readAht = 0;
 
-        switch (disparoMedicion) {
+        switch (disparoMedicion)
+        {
         case 0:
             status = pressure.startTemperature();
             batteryLevel = analogRead(BAT);
@@ -388,7 +439,8 @@ void readSensors() {
 }
 
 // Lectura de los datos del sensor MPU6050
-void leerMPU() {
+void leerMPU()
+{
     accX = mpu.getAccX();
     accY = mpu.getAccY();
     accZ = mpu.getAccZ();
@@ -398,12 +450,13 @@ void leerMPU() {
 }
 
 // Funcion callback del Timer para iniciar la lectura del MPU6050
-void readMPU() {
+void readMPU()
+{
     leerMpu = true; // Comienza la lectura del mpu
 }
 
-
-void beginMeasurementAht() {
+void beginMeasurementAht()
+{
     Wire.beginTransmission(0x38);
 
     Wire.write(AHTXX_START_MEASUREMENT_REG);      // send measurement command, strat measurement
@@ -414,10 +467,12 @@ void beginMeasurementAht() {
 }
 
 // Lectura de los datos del sensor AHT10
-void readHumidityAht() {
+void readHumidityAht()
+{
     Wire.requestFrom(0x38, 7, (uint8_t) true); // read n-byte to "wire.h" rxBuffer, true-send stop after transmission
 
-    for (uint8_t i = 0; i < 7; i++) {
+    for (uint8_t i = 0; i < 7; i++)
+    {
         _rawData[i] = Wire.read();
     }
 
@@ -431,19 +486,23 @@ void readHumidityAht() {
 }
 
 // Funcion callback del Timer para escribir en el archivo de la MicroSD
-void escribirArchivo() {
+void escribirArchivo()
+{
     escritura = true;
 }
 
 // Funcion encargada de resetear el micro si algun dispositivo I2C no se inicializa
-void errorCheck(char device) {
+void errorCheck(char device)
+{
     int deberiaResetear = 0;
-    while (checkSensorStatus(device)) {
+    while (checkSensorStatus(device))
+    {
         digitalWrite(LED_BUILTIN, !LED_BUILTIN);
         // stop everything if could not connect to I2C device
         delay(1000);
         deberiaResetear++;
-        if (deberiaResetear >= 5) {
+        if (deberiaResetear >= 5)
+        {
             reportarError(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
             NVIC_SystemReset();
         }
@@ -451,8 +510,10 @@ void errorCheck(char device) {
 }
 
 // Funcion encargada de detectar el estado de inicializacion en el dispositivo seleccionado
-bool checkSensorStatus(char device) {
-    switch (device) {
+bool checkSensorStatus(char device)
+{
+    switch (device)
+    {
     case 1:
         return mpu.begin(); // return begin status of MPU6050
         break;
@@ -468,7 +529,8 @@ bool checkSensorStatus(char device) {
     }
 }
 
-void millisMision(){
+void millisMision()
+{
     if (inicializado)
         tiempoMision++;
 }
