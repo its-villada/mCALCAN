@@ -6,7 +6,6 @@
 #include <STM32TimerInterrupt.h>
 #include <STM32_ISR_Timer.h>
 #include <STM32_ISR_Timer.hpp>
-//#include <SdFat.h>
 #include <SD.h>
 #include <Wire.h>
 
@@ -25,6 +24,7 @@
 #define BAT PA0                     // Pin de tension de bateria
 #define MainS PA12                  // Pin Sensors enable
 #define AQS PA4                     // Pin del sensor MQ-135
+#define buzzer 
 #define HW_TIMER_INTERVAL_MS 1
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
@@ -139,6 +139,7 @@ void loop() {
                 escritura = false;
             } else {
                 reportarError("Fallo al abrir archivo de MicroSD");
+                escritura = false;
             }
         }
     }
@@ -151,7 +152,7 @@ void timerSetup() {
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);    // Intervalo de timer para los ciclos de lectura de sensor
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);      // Intervalo de timer para la transmision de datos a la ET
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para escribir a la microsd
-    ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_4, millisMision);
+    //ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_4, millisMision);
 }
 
 // Inicializacion del LoRa
@@ -231,8 +232,7 @@ void transmitir() {
 
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
 void telemetrySend() {
-    //tiempoMision = (millis() - empezarMision);
-    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
+    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(millis()) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
     if (isFreeFall) {
         isFreeFall = false;
     }
@@ -307,7 +307,7 @@ void onReceive(int packetSize) {
 // Funcion que envia la presion base a la Estacion Terrena
 void enviarPresionBase() {
     if (enviarDevuelta) {
-        LoRa_Transmit(0, 17, String(baseline));
+        LoRa_Transmit(0, 10, String(baseline));
         enviarDevuelta = false;
     }
 }
