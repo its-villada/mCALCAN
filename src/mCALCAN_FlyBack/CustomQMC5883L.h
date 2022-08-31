@@ -46,13 +46,13 @@ private:
   //calibration_matrix[3][3] is the transformation matrix
   //replace M11, M12,..,M33 with your transformation matrix data
   double calibration_matrix[3][3] = {
-    { 3.13, 0.259, -0.267 },
-    { -0.243, 4.178, -0.517 },
-    { 0.314, 5.085, 3.275 }
+    { 2.342, 0.112, -0.138 },
+    { -0.132, 2.16, -0.275},
+    { 0.076, 0.121, 2.429 }
   };
   //bias[3] is the bias
   //replace Bx, By, Bz with your bias data
-  double bias[3] = {422.611,-790.265,-1972.646};
+  double bias[3] = {123.79,109.089,-336.193};
 };
 
 #endif

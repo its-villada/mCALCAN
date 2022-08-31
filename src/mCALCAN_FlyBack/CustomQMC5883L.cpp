@@ -73,9 +73,11 @@ bool CustomQMC5883L::init() {
 
   Wire.begin();
   writeReg(0x0B, 0x01);
-  setMode(0x01, 0x0C, 0x00, 0x00);
+  setMode(0x01,0x0C,0x10,0X00);   // = 1D
+  
+  //setMode(0x01, 0x0C, 0x00, 0x00); = 0x0D
 
-  if (readRegister8(0x0D) != 0xFF || readRegister8(0x09) != 0x0D) { // modificar si se cambia la configuracion del modulo
+  if (readRegister8(0x0D) != 0xFF || readRegister8(0x09) != 0x1D) { // modificar si se cambia la configuracion del modulo
     return false;
   }
   return true;
