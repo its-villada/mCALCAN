@@ -2,6 +2,7 @@
 #include <LoRa.h>
 #include <string.h>
 #include <SFE_BMP180.h>
+#include <EEPROM.h>
 
 SFE_BMP180 pressure;
 
@@ -26,16 +27,19 @@ SFE_BMP180 pressure;
 
 #define DATA_TIME 500
 
+#define comma ','
+
+#define intervalo 1500
+
 double altitud;
-bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, error = false, cansatReset = false, telemetria = false;
-
-String LoRaData, presionBase, data = "";
-
-String tiempoDeTransmision, tiempoAnterior;
-
-int pktNumber = 0;
+bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, error = false, cansatReset = false, telemetria = false, recibidoSerial = false, iniciarMision = false, serial = false, misionComenzada = false;
+char strbuffer[50]; // variable to copy strings from flash memory as required
+int x, epromStart = 0, comandoFracasado;
+String LoRaData, presionBase = "0", data = "", recepcionSerial, tiempoDeTransmision, tiempoAnterior;
+uint32_t tiempoAnterior2, tiempoPresente;
 
 void (*resetFunc)(void) = 0;
+void LoRa_Transmit(uint8_t, uint8_t, String);
 
 void setup()
 {
@@ -43,6 +47,8 @@ void setup()
     pinMode(LED, OUTPUT);
     // Incializo el Serial Monitor
     Serial.begin(SERIAL_BAUDRATE);
+    EEPROM.begin();
+    // Turn on the transmission, reception, and Receive interrupt
     while (!Serial)
     {
         // Mientras el COM no esté disponible el LED onbooard encendido
@@ -74,6 +80,47 @@ void setup()
 
 void loop()
 {
+    tiempoPresente = millis();
+    if (Serial.available())
+    {
+        recepcionSerial = Serial.readString();
+        recepcionSerial.trim();
+        serial = true;
+    }
+    if (serial)
+    {
+        int confirmacion0 = recepcionSerial.indexOf(',');
+        int tipo1 = recepcionSerial.indexOf(',', confirmacion0 + 1); // Tipo de mensaje
+        String tipomsg = recepcionSerial.substring(confirmacion0 + 1, tipo1);
+        if ((tiempoPresente - tiempoAnterior2) >= intervalo)
+        {
+            comandoFracasado++;
+            tiempoAnterior2 = millis();
+            LoRa.beginPacket();
+            LoRa.print(recepcionSerial);
+            LoRa.endPacket(true);
+            LoRa.receive();
+            if (tipomsg.toInt() == 1)
+                serial = false;
+            else
+                ;
+        }
+    }
+    if (noPudoProcesar || comandoFracasado >= 4)
+    {
+        serial = false;
+        Serial.println("Comando fracasado");
+        noPudoProcesar = false;
+    }
+    else
+    {
+        if (haRespondido)
+        {
+            serial = false;
+            Serial.println("Comando Exitoso");
+            haRespondido = false;
+        }
+    }
 }
 
 void onReceive(int packetSize)
@@ -106,7 +153,7 @@ void onReceive(int packetSize)
             break;
 
         case 3:
-            noPudoProcesar = true; // Significa que el paquete enviado pudo ser procesado
+            noPudoProcesar = true; // Significa que el paquete enviado no pudo ser procesado
             break;
 
         case 4:
@@ -166,6 +213,8 @@ void onReceive(int packetSize)
             int indicador11 = LoRaData.indexOf(',', indicador10 + 1);
             int indicador12 = LoRaData.indexOf(',', indicador11 + 1);
             int indicador13 = LoRaData.indexOf(',', indicador12 + 1);
+            int indicador14 = LoRaData.indexOf(',', indicador13 + 1);
+            int indicador15 = LoRaData.indexOf(',', indicador14 + 1);
 
             String temperatura = LoRaData.substring(codigo2 + 1, indicador1);
 
@@ -189,7 +238,16 @@ void onReceive(int packetSize)
 
             String humedad = LoRaData.substring(indicador12 + 1, indicador13);
 
-            calidadDeAire = (calidadDeAire.toInt() - 282);
+            String latitud = LoRaData.substring(indicador13 + 1, indicador14);
+
+            String longitud = LoRaData.substring(indicador14 + 1, indicador15);
+
+            calidadDeAire = (calidadDeAire.toInt() - 215);
+
+            if (presionBase.toDouble() <= 500)
+            {
+                presionBase = getEeepromStr(0, 6);
+            }
 
             altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
 
@@ -212,10 +270,8 @@ void onReceive(int packetSize)
 
             // Printeo de los datos recibidos
 
-            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + bat + "," + calidadDeAire + "," + humedad + "%" + "," + tiempoDeTransmision);
+            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "%" + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + tiempoDeTransmision);
             tiempoAnterior = tiempo;
-            // Apagar LED onboard
-            digitalWrite(LED, LOW);
             telemetria = false;
         }
         if (inicializacion)
@@ -230,14 +286,14 @@ void onReceive(int packetSize)
             else
             {
                 Serial.println("Presion Base:" + presionBase);
-                data = presionBase;
+                putEepromStr(0, presionBase);
                 responder = true;
                 inicializacion = false;
             }
         }
         if (responder)
         {
-            confirmacion(data, codigomsg);
+            confirmacion(codigomsg.toInt());
             responder = false;
         }
         if (error)
@@ -247,39 +303,70 @@ void onReceive(int packetSize)
             Serial.println(sError);
             error = false;
         }
-        if (cansatReset = true)
+        if (cansatReset)
         {
-            reset();
+            resetCansat();
         }
+
+        if (haRespondido && codigomsg.toInt() == 03)
+        {
+            misionComenzada = true;
+            EEPROM.write(6, misionComenzada);
+        }
+        
     }
 }
 
-void confirmacion(String datos, String codigomsg)
+void confirmacion(uint8_t codigomsg)
 {
     digitalWrite(LED_BUILTIN, HIGH);
     LoRa.beginPacket();
-    LoRa.print("gvie");
-    LoRa.print(",");
-    LoRa.print("2");
-    LoRa.print(",");
-    LoRa.print(codigomsg);
-    LoRa.print(",");
-    LoRa.print(datos);
+    LoRa_Transmit(2, codigomsg, "");
     LoRa.endPacket(true);
     LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
 }
 
-void reset()
+void resetCansat()
 {
     digitalWrite(LED_BUILTIN, HIGH);
     LoRa.beginPacket();
-    LoRa.print("gvie");
-    LoRa.print(",");
-    LoRa.print("1");
-    LoRa.print(",");
-    LoRa.print("37");
+    LoRa_Transmit(1, 37, "");
     LoRa.endPacket(true);
     LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
+}
+
+void putEepromStr(int start, String str)
+{
+    /** puts a string into the eeprom at a given address */
+    int strlen = str.length() + 1;
+    char chArray[strlen];
+    str.toCharArray(chArray, strlen);
+    for (x = start; x < (start + strlen); x++)
+    {
+        EEPROM.write(x, chArray[x]);
+    }
+}
+
+char *getEeepromStr(int start, int len)
+{
+    /** gets a string from EEPROM into the strbuffer */
+    for (x = 0; x < len; x++)
+    {
+        strbuffer[x] = EEPROM.read(x);
+    }
+    strbuffer[x] = 0;
+    return strbuffer;
+}
+
+// Funcion estandard para enviar mensajes por LoRa con el Protocolo gVIE
+void LoRa_Transmit(uint8_t type, uint8_t reqs, String data)
+{
+    digitalWrite(LED_BUILTIN, LOW);
+    LoRa.beginPacket();
+    LoRa.print(String("gvie," + String(type) + comma + String(reqs) + comma + data));
+    LoRa.endPacket(true);
+    LoRa.receive();
+    digitalWrite(LED_BUILTIN, HIGH);
 }
