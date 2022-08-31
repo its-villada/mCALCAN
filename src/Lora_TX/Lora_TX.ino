@@ -8,6 +8,7 @@
 #include <STM32_ISR_Timer.hpp>
 #include <SD.h>
 #include <Wire.h>
+#include <EEPROM.h>
 
 #define SERIAL_BAUDRATE 9600     // Velocidad del Puerto Serie
 #define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
@@ -24,12 +25,11 @@
 #define BAT PA0                  // Pin de tension de bateria
 #define MainS PA12               // Pin Sensors enable
 #define AQS PA4                  // Pin del sensor MQ-135
-#define buzzer
+#define buzzer PA8               // Pin del buzzer de recuperacion
 #define HW_TIMER_INTERVAL_MS 1
 #define TIMER_INTERVAL_1 5L   // TIMER1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Timer2 salta cada 500 ms
-#define TIMER_INTERVAL_3 23L  // Timer3 salta cada 23 ms
-#define TIMER_INTERVAL_4 1L   // TIMER4 salta cada 5 ms
+#define TIMER_INTERVAL_3 50L  // Timer3 salta cada 23 ms
 #define comma ','
 
 File csvTelemetry;
@@ -42,17 +42,18 @@ AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 
 float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
 double T, P, baseline;
-bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = true, inicializado = false, enviarDevuelta = true, escritura = false;
-int disparoMedicion = 0, batteryLevel, MQ135, readAht = 0, cicloAht = 0;
-uint32_t tiempoMision = 0, empezarMision = 0, humidity;
-String dataEnviar = "", dataRecibir;
+bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipe = false;
+uint8_t disparoMedicion = 0, readAht = 0, cicloAht = 0, preparacion = 0;
+uint16_t MQ135, batteryLevel;
+uint32_t humidity;
+String dataEnviar = "", dataRecibir, latitud, longitud, latitudAterrizaje, longitudAterrizaje;
 uint8_t _rawData[7] = {0, 0, 0, 0, 0, 0, 0}; //{status, RH, RH, RH+T, T, T, CRC}, CRC for AHT2x only
 
 void Timer1Handler();
 void onReceive(int);
 void telemetrySend();
 void enviarPresionBase();
-void reportarError(String);
+void reportar(String);
 void readSensors();
 void beginMeasurementAht();
 void readHumidityAht();
@@ -70,19 +71,39 @@ void escribirArchivo();
 void errorCheck(char);
 bool checkSensorStatus(char);
 void LoRa_Transmit(uint8_t, uint8_t, String);
+void song(int);
 
 void setup()
 {
     // put your setup code here, to run once:
     Serial.begin(9600);
     Wire.begin();
+    EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(MainS, OUTPUT);
     pinMode(BAT, INPUT);
     pinMode(INTpin, INPUT);
     pinMode(AQS, INPUT);
+    pinMode(buzzer, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
-    digitalWrite(MainS, HIGH);
+
+    latitudAterrizaje = getEeepromStr(1, 6);
+    longitudAterrizaje = getEeepromStr(7, 6);
+
+    inicializacion = EEPROM.read(0);
+
+    if (inicializacion)
+    {
+        digitalWrite(MainS, HIGH);
+        sdCardSetup();
+        bmpSetup();
+        aht10Setup();
+        mpuSetup();
+        inicializado = true;
+    }
+
+    Serial.println(latitudAterrizaje);
+    Serial.println(longitudAterrizaje);
 
     loraSetup(); // Setup modulo lora
 
@@ -100,61 +121,67 @@ void loop()
         {
             digitalWrite(MainS, HIGH);
             sdCardSetup();
-            empezarMision = millis();
             bmpSetup();
             aht10Setup();
             mpuSetup();
             while (!haRespondido)
                 enviarPresionBase();
+            haRespondido = false;
             inicializado = true;
+            EEPROM.write(0, true);
         }
     }
     else
     {
-        if (cicloAht == 1)
-            beginMeasurementAht();
+        if ((listoParaDespegar) || (descenso))
+        {
+            if (cicloAht == 1)
+                beginMeasurementAht();
 
-        if (cicloAht == 2)
-        {
-            readHumidityAht();
-            cicloAht = 0;
-        }
-        if (transmit == true)
-        {
-            telemetrySend();
-            transmit = false;
-        }
-        if (sensors == true)
-        {
-            readSensors();
-            sensors = false;
-        }
-        if (actualizarMpu == true)
-        {
-            mpu.update();
-            actualizarMpu = false;
-        }
-        if (leerMpu == true)
-        {
-            if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
-                leerMPU();
-            if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x80))
-                isFreeFall = true;
-            leerMpu = false;
-        }
-        if (escritura == true)
-        {
-            // tiempoMision = (millis() - empezarMision);
-            if (csvTelemetry)
+            if (cicloAht == 2)
             {
-                csvTelemetry.println(String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
-                csvTelemetry.flush();
-                escritura = false;
+                readHumidityAht();
+                cicloAht = 0;
             }
-            else
+            if (transmit == true)
             {
-                reportarError("Fallo al abrir archivo de MicroSD");
-                escritura = false;
+                telemetrySend();
+                transmit = false;
+            }
+            if (sensors == true)
+            {
+                readSensors();
+                sensors = false;
+            }
+            if (actualizarMpu == true)
+            {
+                mpu.update();
+                actualizarMpu = false;
+            }
+            if (leerMpu == true)
+            {
+                if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
+                    leerMPU();
+                if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x80))
+                    isFreeFall = true;
+                leerMpu = false;
+            }
+            if (escritura == true)
+            {
+                if (csvTelemetry)
+                {
+                    if (!transmit)
+                    {
+                        csvTelemetry.println(String(String(millis()) + comma + String(isFreeFall) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel)));
+                        csvTelemetry.flush();
+                        escritura = false;
+                    }
+                }
+                else
+                {
+                    reportar("Fallo al abrir archivo de MicroSD");
+                    escritura = false;
+                }
             }
         }
     }
@@ -168,7 +195,6 @@ void timerSetup()
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_1, sensorsBegin);    // Intervalo de timer para los ciclos de lectura de sensor
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_2, transmitir);      // Intervalo de timer para la transmision de datos a la ET
     ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_3, escribirArchivo); // Intervalo de timer para escribir a la microsd
-    // ISR_Timer1_Temp.setInterval(TIMER_INTERVAL_4, millisMision);
 }
 
 // Inicializacion del LoRa
@@ -223,7 +249,7 @@ void sdCardSetup()
 {
     if (!SD.begin(SS2))
     {
-        reportarError("No se pudo iniciar MicroSD1");
+        reportar("No se pudo iniciar MicroSD1");
         while (1)
             ;
     }
@@ -255,12 +281,19 @@ void transmitir()
     {
         enviarDevuelta = !enviarDevuelta; // Si han pasado 1000 ms, y no se respondio al comando, se vuelve a enviar
     }
+    if (listoParaDespegar)
+        preparacion++;
+    if (preparacion >= 30)
+    {
+        listoParaDespegar = false;
+        preparacion = 0;
+    }
 }
 
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
 void telemetrySend()
 {
-    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(millis()) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue)));
+    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(millis()) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud) + comma + String(longitud)));
     if (isFreeFall)
     {
         isFreeFall = false;
@@ -271,6 +304,7 @@ void telemetrySend()
 void onReceive(int packetSize)
 {
     String LoRaData = LoRa.readString();
+    Serial.println(LoRaData);
 
     // Busca y almacena la posicion (estilo arreglo) del caracter ingresado + X posiciones
     int confirmacion0 = LoRaData.indexOf(',');            // Header
@@ -279,51 +313,52 @@ void onReceive(int packetSize)
 
     // Situa el cursor en X y extrae caracteres hasta Y
     String strconf1 = LoRaData.substring(0, confirmacion0);
-    char tipomsg = (LoRaData.substring(confirmacion0 + 1, tipo1)).toInt();
-    char codigomsg = (LoRaData.substring(tipo1 + 1, codigo2)).toInt();
+    String tipomsg = (LoRaData.substring(confirmacion0 + 1, tipo1));
+    String codigomsg = (LoRaData.substring(tipo1 + 1, codigo2));
 
     if (strconf1 == "gvie")
     { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo
-        switch (tipomsg)
+        switch (tipomsg.toInt())
         { // Puede ser 0, 1, 2, o 3
         case 0:
             responder = true; // Se espera que el mensaje sea de tipo confirmable (Se confirma con "OK")
             break;
 
         case 1:
-            responder = 0; // Se espera que el mensaje sea de tipo no confirmable
+            responder = false; // Se espera que el mensaje sea de tipo no confirmable
+            haRespondido = false;
             break;
 
         case 2:
             haRespondido = true; // Significa que el paquete enviado es para confirmar un comando
             break;
 
-        case 3:
-            noPudoProcesar = true; // Significa que el paquete enviado pudo ser procesado
-            break;
-
         default:
             break;
         }
 
-        if (!haRespondido && !noPudoProcesar)
+        if (!haRespondido)
         {
-            switch (codigomsg)
+            switch (codigomsg.toInt())
             {
-            case 17:
-                escribirDatos = true; // El mensaje recibido es para escribir datos
+            case 3:
+                listoParaDespegar = true;
                 break;
 
-            case 27:
-                ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
+            case 12:
+                coordenadas = true;
+                break;
+
+            case 20:
+                inicializacion = true;
+                break;
+
+            case 35:
+                wipe = true;
                 break;
 
             case 37:
                 NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
-                break;
-
-            case 10:
-                inicializacion = true; // El mensaje recibido es para comenzar la inicializacion de datos
                 break;
 
             case 77:
@@ -334,11 +369,36 @@ void onReceive(int packetSize)
                 break;
             }
         }
-
         if (responder)
         {
-            LoRa_Transmit(2, codigomsg, dataEnviar);
+            LoRa_Transmit(2, codigomsg.toInt(), "");
             responder = false;
+        }
+        if (coordenadas)
+        {
+            int indicador1 = LoRaData.indexOf(',', codigo2 + 1); // Datos
+            int indicador2 = LoRaData.indexOf(',', indicador1 + 1);
+            latitudAterrizaje = LoRaData.substring(codigo2 + 1, indicador1);
+            longitudAterrizaje = LoRaData.substring(indicador1 + 1, indicador2);
+            putEepromStr(1, latitudAterrizaje);
+            putEepromStr(7, longitudAterrizaje);
+            coordenadas = false;
+        }
+        if (!inicializacion)
+        {
+            if (codigomsg.toInt() == 20)
+                LoRa_Transmit(3, 77, "");
+        }
+        if (!listoParaDespegar)
+        {
+            if (codigomsg.toInt() == 03)
+                LoRa_Transmit(3, 77, "");
+        }
+        if(wipe){
+            for (int i = 0; i < 12; i++)
+            {
+                EEPROM.write(0, false);
+            }
         }
     }
 }
@@ -354,7 +414,7 @@ void enviarPresionBase()
 }
 
 // Funcion basica de envio de errores a la Estacion Terrena
-void reportarError(String data)
+void reportar(String data)
 {
     LoRa_Transmit(4, 77, String(data));
 }
@@ -503,7 +563,7 @@ void errorCheck(char device)
         deberiaResetear++;
         if (deberiaResetear >= 5)
         {
-            reportarError(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
+            reportar(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
             NVIC_SystemReset();
         }
     }
@@ -529,8 +589,79 @@ bool checkSensorStatus(char device)
     }
 }
 
-void millisMision()
+void song(int buzzerPin)
 {
-    if (inicializado)
-        tiempoMision++;
+
+    tone(buzzerPin, 988);
+    delay(278);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1480);
+    delay(556);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1976);
+    delay(278);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1109);
+    delay(139);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 988);
+    delay(972);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1480);
+    delay(972);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 988);
+    delay(278);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1480);
+    delay(556);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1976);
+    delay(278);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1109);
+    delay(139);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 1480);
+    delay(556);
+    noTone(buzzerPin);
+
+    tone(buzzerPin, 2960);
+    delay(556);
+    noTone(buzzerPin);
+}
+
+void putEepromStr(int start, String str)
+{
+    /** puts a string into the eeprom at a given address */
+    int strlen = str.length() + 1;
+    char chArray[strlen];
+    str.toCharArray(chArray, strlen);
+    for (int x = start; x < (start + strlen); x++)
+    {
+        EEPROM.write(x, chArray[x]);
+    }
+}
+
+char *getEeepromStr(int start, int len)
+{
+    int x;
+    char strbuffer[50]; // variable to copy strings from flash memory as required
+    /** gets a string from EEPROM into the strbuffer */
+    for (x = 0; x < len; x++)
+    {
+        strbuffer[x] = EEPROM.read(x);
+    }
+    strbuffer[x] = 0;
+    return strbuffer;
 }
