@@ -337,6 +337,13 @@ void resetCansat()
     digitalWrite(LED_BUILTIN, LOW);
 }
 
+int putEepromFloat(int address, float data)
+{
+    EEPROM.put(address, data);
+    address += sizeof(float);
+    return address;
+}
+
 void putEepromStr(int start, String str)
 {
     /** puts a string into the eeprom at a given address */
