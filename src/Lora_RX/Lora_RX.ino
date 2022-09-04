@@ -14,28 +14,22 @@ SFE_BMP180 pressure;
 #define SERIAL_BAUDRATE 9600 // Velocidad del Puerto Serie
 
 #define LORA_FREQUENCY 915000000
-
 #define LORA_SYNC_WORD 0xDE
-
-#define LORA_POWER 17 // TX power in dB, defaults to 17.
-
-#define LORA_SPREAD_FACTOR 7 // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
-
+#define LORA_POWER 17            // TX power in dB, defaults to 17.
+#define LORA_SPREAD_FACTOR 7     // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
 #define LORA_SIG_BANDWIDTH 125E3 // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15.6E3, 20.8E3, 31.25E3, 41.7E3, 62. 5E3, 125E3, 250E3, and 500E3
-
 #define LORA_CODING_RATE 5
-
 #define DATA_TIME 500
 
 #define comma ','
 
 #define intervalo 1500
 
+float presionBase;
 double altitud;
-bool responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, error = false, cansatReset = false, telemetria = false, recibidoSerial = false, iniciarMision = false, serial = false, misionComenzada = false;
-char strbuffer[50]; // variable to copy strings from flash memory as required
-int x, epromStart = 0, comandoFracasado;
-String LoRaData, presionBase = "0", data = "", recepcionSerial, tiempoDeTransmision, tiempoAnterior;
+bool responder = false, haRespondido = false, noPudoProcesar = false, inicializacion = false, error = false, cansatReset = false, telemetria = false, serial = false;
+uint8_t comandoFracasado;
+String LoRaData, presion, data = "", recepcionSerial, latencia, tiempoAnterior;
 uint32_t tiempoAnterior2, tiempoPresente;
 
 void (*resetFunc)(void) = 0;
@@ -94,7 +88,6 @@ void loop()
         String tipomsg = recepcionSerial.substring(confirmacion0 + 1, tipo1);
         if ((tiempoPresente - tiempoAnterior2) >= intervalo)
         {
-            comandoFracasado++;
             tiempoAnterior2 = millis();
             LoRa.beginPacket();
             LoRa.print(recepcionSerial);
@@ -103,13 +96,14 @@ void loop()
             if (tipomsg.toInt() == 1)
                 serial = false;
             else
-                ;
+                comandoFracasado++;
         }
     }
     if (noPudoProcesar || comandoFracasado >= 4)
     {
         serial = false;
         Serial.println("Comando fracasado");
+        comandoFracasado = 0;
         noPudoProcesar = false;
     }
     else
@@ -117,6 +111,7 @@ void loop()
         if (haRespondido)
         {
             serial = false;
+            comandoFracasado = 0;
             Serial.println("Comando Exitoso");
             haRespondido = false;
         }
@@ -135,6 +130,7 @@ void onReceive(int packetSize)
     String tipomsg = LoRaData.substring(confirmacion0 + 1, tipo1);
     String codigomsg = LoRaData.substring(tipo1 + 1, codigo2);
 
+    // Desglosaje del protocolo GVIE
     if (strconf1 == "gvie")
     { // Verifica si la informacion reciciba viene de nuestro lora a partir de la cadena de comienzo
 
@@ -169,14 +165,6 @@ void onReceive(int packetSize)
             switch (codigomsg.toInt())
             {
 
-            case 17:
-                escribirDatos = true; // El mensaje recibido es para escribir datos
-                break;
-
-            case 27:
-                ejecutarAccion = true; // EL mensaje recibido es para ejecutar una accion
-                break;
-
             case 37:
                 resetFunc(); // El mensaje recibido es para resetear el sistema
                 break;
@@ -197,7 +185,7 @@ void onReceive(int packetSize)
                 break;
             }
         }
-
+        // Recepcion de telemetria raw
         if (telemetria)
         {
             int indicador1 = LoRaData.indexOf(',', codigo2 + 1); // Datos
@@ -242,14 +230,19 @@ void onReceive(int packetSize)
 
             String longitud = LoRaData.substring(indicador14 + 1, indicador15);
 
-            calidadDeAire = (calidadDeAire.toInt() - 215);
+            calidadDeAire = (calidadDeAire.toInt() - 255);
 
-            if (presionBase.toDouble() <= 500)
+            if (presionBase <= 500)
             {
-                presionBase = getEeepromStr(0, 6);
+                EEPROM.get(0, presionBase);
+                Serial.print("Presion base:");
+                Serial.println(presionBase);
             }
 
-            altitud = pressure.altitude(presion.toDouble(), presionBase.toDouble());
+            if (presion.toDouble() >= 700)
+            {
+                altitud = pressure.altitude(presion.toDouble(), presionBase);
+            }
 
             // Calculo de valores crudos recibidos desde el satelite
 
@@ -266,57 +259,57 @@ void onReceive(int packetSize)
             vel2 = vel2.toDouble() * 9.8066;
             vel3 = vel3.toDouble() * 9.8066;
 
-            tiempoDeTransmision = (tiempo.toDouble() - tiempoAnterior.toDouble());
+            latencia = (tiempo.toDouble() - tiempoAnterior.toDouble());
 
             // Printeo de los datos recibidos
 
-            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "%" + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + tiempoDeTransmision);
+            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "%" + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + latencia);
             tiempoAnterior = tiempo;
             telemetria = false;
         }
+        // Se obtiene la presion base y queda guardada
         if (inicializacion)
         {
-            int presion = LoRaData.indexOf(',', codigo2 + 1);
-            presionBase = LoRaData.substring(codigo2 + 1, presion);
-            if (presionBase.toInt() <= 500)
+            int indicadorP = LoRaData.indexOf(',', codigo2 + 1);
+            presion = LoRaData.substring(codigo2 + 1, indicadorP);
+            presionBase = presion.toFloat();
+            if (presionBase <= 500)
             {
                 Serial.println("Error obteniendo la presion Base");
                 responder = false;
             }
             else
             {
-                Serial.println("Presion Base:" + presionBase);
-                putEepromStr(0, presionBase);
+                Serial.println("Presion Base:" + presion);
+                Serial.println(presionBase);
+                EEPROM.put(0, presionBase);
                 responder = true;
                 inicializacion = false;
             }
         }
+        // Se responde a algun mensaje
         if (responder)
         {
             confirmacion(codigomsg.toInt());
             responder = false;
         }
+        // Significa que hubo un error en el cansat
         if (error)
         {
             int indicador1 = LoRaData.indexOf(',', codigo2 + 1);
-            String sError = LoRaData.substring(codigo2 + 1, indicador1); // Significa que hubo un error en el cansat, se reinicia el sistema
+            String sError = LoRaData.substring(codigo2 + 1, indicador1);
             Serial.println(sError);
             error = false;
         }
+        // Se envia el reset del cansat
         if (cansatReset)
         {
             resetCansat();
         }
-
-        if (haRespondido && codigomsg.toInt() == 03)
-        {
-            misionComenzada = true;
-            EEPROM.write(6, misionComenzada);
-        }
-        
     }
 }
 
+// Funcion para confirmar algun proceso
 void confirmacion(uint8_t codigomsg)
 {
     digitalWrite(LED_BUILTIN, HIGH);
@@ -327,6 +320,7 @@ void confirmacion(uint8_t codigomsg)
     digitalWrite(LED_BUILTIN, LOW);
 }
 
+// Funcion para resetear el cansat
 void resetCansat()
 {
     digitalWrite(LED_BUILTIN, HIGH);
@@ -335,29 +329,6 @@ void resetCansat()
     LoRa.endPacket(true);
     LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
-}
-
-void putEepromStr(int start, String str)
-{
-    /** puts a string into the eeprom at a given address */
-    int strlen = str.length() + 1;
-    char chArray[strlen];
-    str.toCharArray(chArray, strlen);
-    for (x = start; x < (start + strlen); x++)
-    {
-        EEPROM.write(x, chArray[x]);
-    }
-}
-
-char *getEeepromStr(int start, int len)
-{
-    /** gets a string from EEPROM into the strbuffer */
-    for (x = 0; x < len; x++)
-    {
-        strbuffer[x] = EEPROM.read(x);
-    }
-    strbuffer[x] = 0;
-    return strbuffer;
 }
 
 // Funcion estandard para enviar mensajes por LoRa con el Protocolo gVIE
