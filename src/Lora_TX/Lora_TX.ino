@@ -48,7 +48,7 @@ MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 
 float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
-double T, P, latitud, longitud;
+double T, P, pAnterior, latitud, longitud;
 bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
 uint8_t disparoMedicion = 0, readAht = 0, cicloAht = 0, preparacion = 0;
 uint16_t MQ135, batteryLevel;
@@ -109,6 +109,7 @@ void setup()
         bmpSetup();
         aht10Setup();
         mpuSetup();
+        actualizarMpu = true;
         inicializado = true;
     }
 
@@ -133,6 +134,7 @@ void loop()
             mpuSetup();
             while (!haRespondido)
                 enviarPresionBase();
+            actualizarMpu = true;
             haRespondido = false;
             inicializado = true;
             EEPROM.update(memInit, true);
@@ -167,8 +169,23 @@ void loop()
             }
             if (leerMpu)
             {
-                if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x01))
+                byte data = mpu.readData(0x3A);
+                if (data == 0x81)
+                {
                     leerMPU();
+                    isFreeFall = true;
+                    descenso = true;
+                    EEPROM.update(memDesc, true);
+                }
+                else if (data == 0x01)
+                    leerMPU();
+                else if (data == 0x80)
+                {
+                    isFreeFall = true;
+                    descenso = true;
+                    EEPROM.update(memDesc, true);
+                }
+                actualizarMpu = true;
                 leerMpu = false;
             }
             if (escritura)
@@ -187,15 +204,6 @@ void loop()
                     reportar("Fallo al abrir archivo de MicroSD");
                     escritura = false;
                 }
-            }
-        }
-        if (leerMpu)
-        {
-            if ((mpu.readData(0x3A) == 0x81) || (mpu.readData(0x3A) == 0x80))
-            {
-                isFreeFall = true;
-                descenso = true;
-                EEPROM.update(memDesc, true);
             }
         }
     }
@@ -293,9 +301,9 @@ void transmitir()
     {
         enviarDevuelta = !enviarDevuelta; // Si han pasado 1000 ms, y no se respondio al comando, se vuelve a enviar
     }
-    if (listoParaDespegar)
+    if (inicializado && listoParaDespegar)
         preparacion++;
-    if (preparacion >= 30)
+    if (preparacion >= 31)
     {
         listoParaDespegar = false;
         preparacion = 0;
@@ -353,13 +361,9 @@ void onReceive(int packetSize)
         {
             switch (codigomsg.toInt())
             {
-            case 0:
-                tiempoMision = millis();
-                iniciarMision = true;
-                EEPROM.update(memMision, true);
-                break;
 
             case 3:
+                inicializacion = true;
                 listoParaDespegar = true;
                 break;
 
@@ -368,7 +372,9 @@ void onReceive(int packetSize)
                 break;
 
             case 20:
-                inicializacion = true;
+                tiempoMision = millis();
+                iniciarMision = true;
+                EEPROM.update(memMision, true);
                 break;
 
             case 21:
@@ -461,7 +467,6 @@ void sensorsBegin()
 // Funcion que lee todos los sensores a su maxima velocidad. Controlada por banderas de interrupcion
 void readSensors()
 {
-
     char status;
     if (!bmpIsInit)
     {
@@ -480,6 +485,7 @@ void readSensors()
                     // Espera que termine la medicion de Presion
                     delay(status);
                     status = pressure.getPressure(P, T);
+                    pAnterior = P;
                 }
             }
         }
@@ -501,11 +507,8 @@ void readSensors()
         case 0:
             status = pressure.startTemperature();
             batteryLevel = analogRead(BAT);
-            MQ135 = analogRead(AQS);
             actualizarCompass = true;
-            actualizarMpu = true;
-            if (status != 0)
-                disparoMedicion++;
+            disparoMedicion++;
             break;
 
         case 1:
@@ -514,14 +517,15 @@ void readSensors()
             break;
 
         case 2:
-            actualizarMpu = true;
+            MQ135 = analogRead(AQS);
             status = pressure.startPressure(0);
-            if (status != 0)
-                disparoMedicion++;
+            disparoMedicion++;
             break;
 
         case 3:
             status = pressure.getPressure(P, T);
+            if ((P - pAnterior) >= 100)
+                P = pAnterior;
             disparoMedicion++;
             break;
 
@@ -599,8 +603,8 @@ void errorCheck(char device)
         if (deberiaResetear >= 5)
         {
             reportar(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
-            delay(100);
-            NVIC_SystemReset();
+            delay(1000);
+            deberiaResetear = 0;
         }
     }
 }
