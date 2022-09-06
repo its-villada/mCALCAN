@@ -1,0 +1,30 @@
+{
+  "name": "STM32_ISR_Servo",
+  "version": "1.1.0",
+  "keywords": "timing, device, control, timer, interrupt, isr, isr-based, hardware-timer, mission-critical, accuracy, precise, non-blocking, stm32, stm32h7, stm32l5, stm32f1, stm32f4, stm32f7, stm32g4, servo",
+  "description": "This library enables you to use 1 Hardware Timer on an STM32F/L/H/G/WB/MP1-based board to control up to 16 or more servo motors.",
+  "authors":
+  {
+    "name":  "Khoi Hoang",
+    "url":   "https://github.com/khoih-prog",
+    "maintainer": true
+  },   
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/khoih-prog/STM32_ISR_Servo"
+  },
+  "homepage": "https://github.com/khoih-prog",
+  "export": {
+    "exclude": [
+      "linux",
+      "extras",
+      "tests"
+    ]
+  },
+  "license": "MIT",
+  "frameworks": "*",
+  "platforms": "ststm32", 
+  "examples": "examples/*/*/*.ino",
+  "headers": [ "STM32_ISR_Servo.h", "STM32_ISR_Servo.hpp" ]
+}

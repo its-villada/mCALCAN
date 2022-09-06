@@ -1,0 +1,11 @@
+name=STM32_ISR_Servo
+version=1.1.0
+author=Khoi Hoang
+maintainer=Khoi Hoang <khoih.prog@gmail.com>
+license=MIT
+sentence=This library enables you to use Interrupt from Hardware Timers on an STM32F/L/H/G/WB/MP1 board to control multiple servo motors.
+paragraph=This library enables you to use 1 Hardware Timer on an STM32F/L/H/G/WB/MP1-based board to control 16 or more servo motors.
+category=Device Control
+url=https://github.com/khoih-prog/STM32_ISR_Servo
+architectures=stm32
+includes=STM32_ISR_Servo.h, STM32_ISR_Servo.hpp
