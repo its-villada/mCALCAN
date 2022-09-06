@@ -93,28 +93,34 @@ void loop()
             LoRa.print(recepcionSerial);
             LoRa.endPacket(true);
             LoRa.receive();
-            if (tipomsg.toInt() == 1)
+            if (tipomsg.toInt() != 0)
+            {
                 serial = false;
+                comandoFracasado = 0;
+            }
             else
                 comandoFracasado++;
         }
     }
-    if (noPudoProcesar || comandoFracasado >= 4)
+    if (noPudoProcesar)
     {
         serial = false;
-        Serial.println("Comando fracasado");
+        Serial.println("El comando no se pudo procesar");
         comandoFracasado = 0;
         noPudoProcesar = false;
     }
-    else
+    else if (comandoFracasado >= 4)
     {
-        if (haRespondido)
-        {
-            serial = false;
-            comandoFracasado = 0;
-            Serial.println("Comando Exitoso");
-            haRespondido = false;
-        }
+        serial = false;
+        Serial.println("Comando Fracasado");
+        comandoFracasado = 0;
+    }
+    else if (haRespondido)
+    {
+        serial = false;
+        comandoFracasado = 0;
+        Serial.println("Comando Exitoso");
+        haRespondido = false;
     }
 }
 
@@ -251,6 +257,10 @@ void onReceive(int packetSize)
             if (sAltitud.toDouble() >= 10)
             {
                 sAltitud = sAltitud.toDouble() - 10;
+            }
+            if (sAltitud.toDouble() <= 0)
+            {
+                sAltitud = "0.00";
             }
 
             bat = ((bat.toInt() * 100) / 1023);
