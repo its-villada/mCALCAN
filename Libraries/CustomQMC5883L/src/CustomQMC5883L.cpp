@@ -71,16 +71,16 @@ CustomQMC5883L::CustomQMC5883L() {
 bool CustomQMC5883L::init() {
 
 
-  Wire.begin();
-  writeReg(0x0B, 0x01);
-  setMode(0x01,0x0C,0x10,0X00);   // = 1D
-  
-  //setMode(0x01, 0x0C, 0x00, 0x00); = 0x0D
+	Wire.begin();
+	writeReg(0x0B, 0x01);
+	setMode(0x01,0x0C,0x10,0X00);   // = 1D
 
-  if (readRegister8(0x0D) != 0xFF || readRegister8(0x09) != 0x1D) { // modificar si se cambia la configuracion del modulo
-    return false;
-  }
-  return true;
+	//setMode(0x01, 0x0C, 0x00, 0x00); = 0x0D
+
+	if (readRegister8(0x0D) != 0xFF || readRegister8(0x09) != 0x1D) { // modificar si se cambia la configuracion del modulo
+		return false;
+	}
+	return true;
 }
 
 
@@ -92,7 +92,7 @@ bool CustomQMC5883L::init() {
 **/
 // Set I2C Address if different then default.
 void CustomQMC5883L::setADDR(byte b) {
-  _ADDR = b;
+	_ADDR = b;
 }
 
 
@@ -106,10 +106,10 @@ void CustomQMC5883L::setADDR(byte b) {
 **/
 // Write register values to chip
 void CustomQMC5883L::writeReg(byte reg, byte val) {
-  Wire.beginTransmission(_ADDR);
-  Wire.write(reg);
-  Wire.write(val);
-  Wire.endTransmission();
+	Wire.beginTransmission(_ADDR);
+	Wire.write(reg);
+	Wire.write(val);
+	Wire.endTransmission();
 }
 
 
@@ -121,7 +121,7 @@ void CustomQMC5883L::writeReg(byte reg, byte val) {
 **/
 // Set chip mode
 void CustomQMC5883L::setMode(byte mode, byte odr, byte rng, byte osr) {
-  writeReg(0x09, mode | odr | rng | osr);
+	writeReg(0x09, mode | odr | rng | osr);
 }
 
 
@@ -132,13 +132,13 @@ void CustomQMC5883L::setMode(byte mode, byte odr, byte rng, byte osr) {
 **/
 // Reset the chip
 void CustomQMC5883L::setReset() {
-  writeReg(0x0A, 0x80);
+	writeReg(0x0A, 0x80);
 }
 
 // 1 = Basic 2 = Advanced
-void CustomQMC5883L::setSmoothingSteps(byte steps) {
-  _smoothUse = true;
-  _smoothSteps = (steps > 20) ? 20 : steps;
+void CustomQMC5883L::setSmoothingSteps(uint8_t steps) {
+	_smoothUse = true;
+	_smoothSteps = (steps > 20) ? 20 : steps;
 }
 
 /**
@@ -147,9 +147,8 @@ void CustomQMC5883L::setSmoothingSteps(byte steps) {
 
 **/
 void CustomQMC5883L::useCalibration(bool a) {
-  _calibrationUse = a;
+	_calibrationUse = a;
 }
-
 
 
 /**
@@ -159,39 +158,35 @@ void CustomQMC5883L::useCalibration(bool a) {
 	@since v0.1;
 **/
 void CustomQMC5883L::read() {
-  magdata rawValues;
-  Wire.beginTransmission(_ADDR);
-  Wire.write(0x00);
+	magdata rawValues;
+	Wire.beginTransmission(_ADDR);
+	Wire.write(0x00);
 
-  Wire.requestFrom(_ADDR, (byte)6);
-  rawValues.Xaxis = (int)(int16_t)(Wire.read() | Wire.read() << 8);
-  rawValues.Yaxis = (int)(int16_t)(Wire.read() | Wire.read() << 8);
-  rawValues.Zaxis = (int)(int16_t)(Wire.read() | Wire.read() << 8);
+	Wire.requestFrom(_ADDR, (byte)6);
+	rawValues.Xaxis = (int)(int16_t)(Wire.read() | Wire.read() << 8);
+	rawValues.Yaxis = (int)(int16_t)(Wire.read() | Wire.read() << 8);
+	rawValues.Zaxis = (int)(int16_t)(Wire.read() | Wire.read() << 8);
 
-  Wire.endTransmission();
-  if (_smoothUse == false && _calibrationUse == false) {
-    magValues = rawValues;
-    return;
-  }
+	Wire.endTransmission();
+	if (_smoothUse == false && _calibrationUse == false) {
+		magValues = rawValues;
+		return;
+	}
 
-  if (_smoothUse == false && _calibrationUse == true) {
-    _applyCalibration(rawValues);
-    magValues = calibratedValues;
-    return;
-  }
+	if (_smoothUse == false && _calibrationUse == true) {
+		magValues = _applyCalibration(rawValues);;
+		return;
+	}
 
-  if (_smoothUse == true && _calibrationUse == false) {
-    _smoothing(rawValues);
-    magValues = smoothedValues;
-    return;
-  }
+	if (_smoothUse == true && _calibrationUse == false) {	
+		magValues = _smoothing(rawValues);;
+		return;
+	}
 
-  if (_smoothUse == true && _calibrationUse == true) {
-    _applyCalibration(rawValues);
-    _smoothing(calibratedValues);
-    magValues = smoothedValues;
-    return;
-  }
+	if (_smoothUse == true && _calibrationUse == true) {
+		magValues = _smoothing(_applyCalibration(rawValues));;
+		return;
+	}
 }
 
 /**
@@ -200,23 +195,25 @@ void CustomQMC5883L::read() {
 	Extracted from: [https://www.instructables.com/Easy-hard-and-soft-iron-magnetometer-calibration/]
 
 **/
-void CustomQMC5883L::_applyCalibration(magdata rawValues) {
-  int uncalibrated_values[3];
-  int result[3] = {0, 0, 0};
+CustomQMC5883L::magdata CustomQMC5883L::_applyCalibration(magdata rawValues) {
+	int uncalibrated_values[3];
+	int result[3] = {0, 0, 0};
+	magdata calibratedValues = {0, 0, 0,};;
+	//calculation
+	uncalibrated_values[0] = rawValues.Xaxis - bias[0];
+	uncalibrated_values[1] = rawValues.Yaxis - bias[1];
+	uncalibrated_values[2] = rawValues.Zaxis - bias[2];
 
-  //calculation
-  uncalibrated_values[0] = rawValues.Xaxis - bias[0];
-  uncalibrated_values[1] = rawValues.Yaxis - bias[1];
-  uncalibrated_values[2] = rawValues.Zaxis - bias[2];
 
+	for (int i = 0; i < 3; ++i)
+		for (int j = 0; j < 3; ++j)
+			result[i] += calibration_matrix[i][j] * uncalibrated_values[j];
 
-  for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 3; ++j)
-      result[i] += calibration_matrix[i][j] * uncalibrated_values[j];
-
-  calibratedValues.Xaxis = result[0];
-  calibratedValues.Yaxis = result[1];
-  calibratedValues.Zaxis = result[2];
+	calibratedValues.Xaxis = result[0];
+	calibratedValues.Yaxis = result[1];
+	calibratedValues.Zaxis = result[2];
+	
+	return calibratedValues;
 }
 
 
@@ -230,44 +227,46 @@ void CustomQMC5883L::_applyCalibration(magdata rawValues) {
 
 	NOTE: This function does several calculations and can cause your sketch to run slower.
 **/
-void CustomQMC5883L::_smoothing(magdata nonSmooth) {
-  magdata sum = {0, 0, 0,};
+CustomQMC5883L::magdata CustomQMC5883L::_smoothing(magdata nonSmooth) {
+	magdata sum = {0, 0, 0,};
+	magdata smoothedValues = {0, 0, 0,};;
+	if (scannCount >= _smoothSteps) {
+		_firstSmooth = false;
+		scannCount = 0;
+	}
+	scannCount++;
+	historyValues[scannCount - 1].Xaxis = nonSmooth.Xaxis;
+	historyValues[scannCount - 1].Yaxis = nonSmooth.Yaxis;
+	historyValues[scannCount - 1].Zaxis = nonSmooth.Zaxis;
 
-  if (scannCount >= _smoothSteps) {
-    _firstSmooth = false;
-    scannCount = 0;
-  }
-  scannCount++;
-  historyValues[scannCount - 1].Xaxis = nonSmooth.Xaxis;
-  historyValues[scannCount - 1].Yaxis = nonSmooth.Yaxis;
-  historyValues[scannCount - 1].Zaxis = nonSmooth.Zaxis;
+	if (_firstSmooth) {
+		for (int i = 0; i < scannCount; i++) {
+			sum.Xaxis += historyValues[i].Xaxis;
+			sum.Yaxis += historyValues[i].Yaxis;
+			sum.Zaxis += historyValues[i].Zaxis;
+		}
 
-  if (_firstSmooth) {
-    for (int i = 0; i < scannCount; i++) {
-      sum.Xaxis += historyValues[i].Xaxis;
-      sum.Yaxis += historyValues[i].Yaxis;
-      sum.Zaxis += historyValues[i].Zaxis;
-    }
-
-    smoothedValues.Xaxis = sum.Xaxis / scannCount;
-    smoothedValues.Yaxis = sum.Yaxis / scannCount;
-    smoothedValues.Zaxis = sum.Zaxis / scannCount;
-
-
-  }
+		smoothedValues.Xaxis = sum.Xaxis / scannCount;
+		smoothedValues.Yaxis = sum.Yaxis / scannCount;
+		smoothedValues.Zaxis = sum.Zaxis / scannCount;
 
 
-  if (scannCount < 10 && !_firstSmooth) {
-    for (int i = 0; i < _smoothSteps; i++) {
-      sum.Xaxis += historyValues[i].Xaxis;
-      sum.Yaxis += historyValues[i].Yaxis;
-      sum.Zaxis += historyValues[i].Zaxis;
-    }
+	}
 
-    smoothedValues.Xaxis = sum.Xaxis / _smoothSteps;
-    smoothedValues.Yaxis = sum.Yaxis / _smoothSteps;
-    smoothedValues.Zaxis = sum.Zaxis / _smoothSteps;
-  }
+
+	if (scannCount < 10 && !_firstSmooth) {
+		for (int i = 0; i < _smoothSteps; i++) {
+			sum.Xaxis += historyValues[i].Xaxis;
+			sum.Yaxis += historyValues[i].Yaxis;
+			sum.Zaxis += historyValues[i].Zaxis;
+		}
+
+		smoothedValues.Xaxis = sum.Xaxis / _smoothSteps;
+		smoothedValues.Yaxis = sum.Yaxis / _smoothSteps;
+		smoothedValues.Zaxis = sum.Zaxis / _smoothSteps;
+	}
+	
+	return smoothedValues;
 }
 
 
@@ -278,7 +277,7 @@ void CustomQMC5883L::_smoothing(magdata nonSmooth) {
 	@return int x axis
 **/
 int CustomQMC5883L::getX() {
-  return magValues.Xaxis;
+	return magValues.Xaxis;
 }
 
 
@@ -289,7 +288,7 @@ int CustomQMC5883L::getX() {
 	@return int y axis
 **/
 int CustomQMC5883L::getY() {
-  return magValues.Yaxis;
+	return magValues.Yaxis;
 }
 
 
@@ -300,7 +299,7 @@ int CustomQMC5883L::getY() {
 	@return int z axis
 **/
 int CustomQMC5883L::getZ() {
-  return magValues.Zaxis;
+	return magValues.Zaxis;
 }
 
 
@@ -312,21 +311,21 @@ int CustomQMC5883L::getZ() {
 **/
 int CustomQMC5883L::getCompensatedAzimuth(float pitch, float roll) {
 
-  float radRoll = roll * 0.01745329 , radPitch = pitch * 0.01745329;
+	float radRoll = roll * 0.01745329, radPitch = pitch * 0.01745329;
 
-  // Some of these are used twice, so rather than computing them twice in the algorithem we precompute them before hand.
-  float cosRoll = cos(radRoll);
-  float sinRoll = sin(radRoll);
-  float cosPitch = cos(radPitch);
-  float sinPitch = sin(radPitch);
+	// Some of these are used twice, so rather than computing them twice in the algorithem we precompute them before hand.
+	float cosRoll = cos(radRoll);
+	float sinRoll = sin(radRoll);
+	float cosPitch = cos(radPitch);
+	float sinPitch = sin(radPitch);
 
-  // Tilt compensation
-  float Xh = magValues.Xaxis * cosPitch + magValues.Zaxis * sinPitch;
-  float Yh = magValues.Xaxis * sinRoll * sinPitch + magValues.Yaxis * cosRoll - magValues.Zaxis * sinRoll * cosPitch;
+	// Tilt compensation
+	float Xh = magValues.Xaxis * cosPitch + magValues.Zaxis * sinPitch;
+	float Yh = magValues.Xaxis * sinRoll * sinPitch + magValues.Yaxis * cosRoll - magValues.Zaxis * sinRoll * cosPitch;
 
-  float heading = (atan2(Yh, Xh) * 180) / M_PI;
+	float heading = (atan2(Yh, Xh) * 180) / M_PI;
 
-  return heading < 0 ? 360 + heading : heading;
+	return heading < 0 ? 360 + heading : heading;
 }
 
 /**
@@ -335,8 +334,8 @@ int CustomQMC5883L::getCompensatedAzimuth(float pitch, float roll) {
 	@return int azimuth
 **/
 int CustomQMC5883L::getAzimuth(void) {
-  int a = atan2(getY(), getX()) * 180.0 / PI;
-  return a < 0 ? 360 + a : a;
+	int a = atan2(getY(), getX()) * 180.0 / PI;
+	return a < 0 ? 360 + a : a;
 }
 
 /**
@@ -347,16 +346,15 @@ int CustomQMC5883L::getAzimuth(void) {
   @return byte value
 **/
 byte CustomQMC5883L::readRegister8(uint8_t reg) {
-  byte value;
-  Wire.beginTransmission(_ADDR);
-  Wire.write(reg);
-  Wire.endTransmission();
+	byte value;
+	Wire.beginTransmission(_ADDR);
+	Wire.write(reg);
+	Wire.endTransmission();
 
-  Wire.beginTransmission(_ADDR);
-  Wire.requestFrom(_ADDR, 1);
+	Wire.beginTransmission(_ADDR);
+	Wire.requestFrom(_ADDR, (uint8_t)1);
 
-  value = Wire.read();
+	value = Wire.read();
 
-
-  return value;
+	return value;
 }

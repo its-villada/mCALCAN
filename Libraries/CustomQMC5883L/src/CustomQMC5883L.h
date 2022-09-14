@@ -7,52 +7,47 @@
 
 class CustomQMC5883L {
 
-public:
-  CustomQMC5883L();
-  bool init();
-  void setADDR(byte b);
-  void setMode(byte mode, byte odr, byte rng, byte osr);
-  void setSmoothingSteps(byte steps);
-  void useCalibration(bool a);
-  void setReset();
-  void read();
-  int getX();
-  int getY();
-  int getZ();
-  int getCompensatedAzimuth(float pitch,float roll);
-  int getAzimuth(void);
-  void writeReg(byte reg, byte val);
-  byte readRegister8(uint8_t reg);
-  typedef struct {
-    int Xaxis;
-    int Yaxis;
-    int Zaxis;
-  } magdata;
+	public:
+		CustomQMC5883L();
+		typedef struct {
+			int Xaxis;
+			int Yaxis;
+			int Zaxis;
+		} magdata;		
+		double calibration_matrix[3][3];
+		double bias[3];
+		
+		bool init();
+		void setADDR(uint8_t b);
+		void setMode(byte mode, byte odr, byte rng, byte osr);
+		void setSmoothingSteps(uint8_t steps);
+		void useCalibration(bool a = true);
+		void setReset();
+		void read();
+		int getX();
+		int getY();
+		int getZ();
+		int getCompensatedAzimuth(float pitch,float roll);
+		int getAzimuth(void);
 
-private:
-  float magDeclination = -6.433;
-  bool _firstSmooth = true;
-  bool _smoothUse = false;
-  byte _smoothSteps = 5;
-  byte _ADDR = 0x0D;  //default qmc5883 addr
-  bool _calibrationUse = false;
-  void _smoothing(magdata nonSmooth);
-  void _applyCalibration(magdata rawValues);
-  magdata rawValues;
-  magdata calibratedValues;
-  magdata smoothedValues, historyValues[20] = {0,0,0};
-  magdata magValues;
-  int scannCount = 0;
-  //calibration_matrix[3][3] is the transformation matrix
-  //replace M11, M12,..,M33 with your transformation matrix data
-  double calibration_matrix[3][3] = {
-    { 2.342, 0.112, -0.138 },
-    { -0.132, 2.16, -0.275},
-    { 0.076, 0.121, 2.429 }
-  };
-  //bias[3] is the bias
-  //replace Bx, By, Bz with your bias data
-  double bias[3] = {123.79,109.089,-336.193};
+
+	private:
+
+		float magDeclination = -6.433;
+		bool _firstSmooth = true;
+		bool _smoothUse = false;
+		bool _calibrationUse = false;
+		uint8_t _ADDR = 0x0D;  //default qmc5883 addr
+		byte _smoothSteps;
+
+		magdata historyValues[20] = {0,0,0};
+		magdata magValues;
+		uint8_t scannCount = 0;		
+		void writeReg(byte reg, byte val);
+		uint8_t readRegister8(uint8_t reg);
+		CustomQMC5883L::magdata _smoothing(magdata nonSmooth);
+		CustomQMC5883L::magdata _applyCalibration(magdata rawValues);
+
 };
 
 #endif
