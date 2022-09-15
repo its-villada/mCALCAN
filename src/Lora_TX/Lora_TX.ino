@@ -9,6 +9,7 @@
 #include <STM32_ISR_Timer.hpp>
 #include <SD.h>
 #include <Wire.h>
+#include "CustomQMC5883L.h"
 
 #define SERIAL_BAUDRATE 9600     // Velocidad del Puerto Serie
 #define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
@@ -18,13 +19,14 @@
 #define LORA_SIG_BANDWIDTH 125E3 // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15. 6E3, 20.8E3, 31.25E3, 41.7E3, 62.5E3, 125E3, 250E3, and 500E3
 #define LORA_CODING_RATE 5       // Denominator of the coding rate, defaults to 5. Supported values are between 5 and 8, these correspond to coding rates of 4/5 and 4/8. The coding rate numerator is fixed at 4.
 #define RST PB3                  // Pin Reset del transciver LoRa
-#define IRQ PA1                  // Pin DIO0 del transciver LoRa
+#define IRQ PA4                  // Pin DIO0 del transciver LoRa
 #define NSS PA15                 // Pin CS del transciver LoRa
-#define INTpin PA2               // Pin de interrupcion del MPU6050
+#define INTpin PA3               // Pin de interrupcion del MPU6050
 #define DRDY PA11                // Pin de interrupcion del GY-273
-#define BAT PA0                  // Pin de tension de bateria
+#define BAT0 PA0                 // Pin de tension de bateria 1
+#define BAT1 PA1                 // Pin de tension de bateria 2
 #define MainS PA12               // Pin Sensors enable
-#define AQS PA4                  // Pin del sensor MQ-135
+#define AQS PA2                  // Pin del sensor MQ-135
 #define buzzer PA8               // Pin del buzzer de recuperacion
 #define servoDerPin PB1          // Pin del servo derecha
 #define servoIzqPin PB0          // Pin del servo izquierda
@@ -32,26 +34,28 @@
 #define TIMER_INTERVAL_1 5L   // Intervalo1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Intervalo2 salta cada 500 ms
 #define TIMER_INTERVAL_3 50L  // Intervalo3 salta cada 50 ms
+#define compassYawCorrection 0
 #define comma ','
 #define memInit 0
 #define memMision 1
 #define memDesc 2
 #define memLat 3
 #define memLong 4
+#define memReset 5
 
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
-SPIClass mySPI_2(PB15, PB14, PB13);
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
+CustomQMC5883L compass;
 
 float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
 double T, P, pAnterior, latitud, longitud;
 bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
 uint8_t disparoMedicion = 0, readAht = 0, cicloAht = 0, preparacion = 0;
-uint16_t MQ135, batteryLevel;
+uint16_t MQ135, batteryLevel1, batteryLevel2, deltaOrientacion, distanciaADestino, miOrientacion, orientacionADestino;
 uint32_t humidity, tiempoMision;
 String latitudAterrizaje, longitudAterrizaje;
 
@@ -66,6 +70,7 @@ void readHumidityAht();
 void leerMPU();
 void loraSetup();
 void bmpSetup();
+void compassSetup();
 void timerSetup();
 void mpuSetup();
 void aht10Setup();
@@ -73,6 +78,7 @@ void sdCardSetup();
 void transmitir();
 void sensorsBegin();
 void readMPU();
+void leerCompas();
 void escribirArchivo();
 void errorCheck(char);
 bool checkSensorStatus(char);
@@ -86,38 +92,50 @@ void setup()
     // put your setup code here, to run once:
     Serial.begin(9600);
     Wire.begin();
-    EEPROM.begin();
+    // EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(MainS, OUTPUT);
-    pinMode(BAT, INPUT);
+    pinMode(buzzer, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
+    pinMode(BAT0, INPUT);
+    pinMode(BAT1, INPUT);
     pinMode(INTpin, INPUT);
     pinMode(DRDY, INPUT);
     pinMode(AQS, INPUT);
-    pinMode(buzzer, OUTPUT);
+    pinMode(PB12, INPUT);
+    pinMode(PB13, INPUT);
     digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(MainS, LOW);
+    digitalWrite(buzzer, HIGH);
 
-    inicializacion = EEPROM.read(memInit);
+    loraSetup(); // Setup modulo lora
+
+    // if (EEPROM.read(memReset))
+    // {
+    //     reportar("Reset Exitoso");
+    //     EEPROM.update(memReset, 0);
+    // }
+
+    // inicializacion = EEPROM.read(memInit);
 
     if (inicializacion)
     {
-        descenso = EEPROM.read(memDesc);
-        iniciarMision = EEPROM.read(memMision);
-        latitudAterrizaje = EEPROM.read(memLat);
-        longitudAterrizaje = EEPROM.read(memLong);
+        // descenso = EEPROM.read(memDesc);
+        // iniciarMision = EEPROM.read(memMision);
+        // latitudAterrizaje = EEPROM.read(memLat);
+        // longitudAterrizaje = EEPROM.read(memLong);
         digitalWrite(MainS, HIGH);
-        sdCardSetup();
+        //sdCardSetup();
+        compassSetup();
         bmpSetup();
         aht10Setup();
         mpuSetup();
-        actualizarMpu = true;
         inicializado = true;
     }
-
-    loraSetup(); // Setup modulo lora
 
     timerSetup(); // Setup de interrupciones de timer
 
     attachInterrupt(digitalPinToInterrupt(INTpin), readMPU, FALLING);
+    attachInterrupt(digitalPinToInterrupt(DRDY), leerCompas, FALLING);
     LoRa.receive();
 }
 
@@ -128,16 +146,16 @@ void loop()
         if (inicializacion)
         {
             digitalWrite(MainS, HIGH);
-            sdCardSetup();
+            compassSetup();
             bmpSetup();
             aht10Setup();
             mpuSetup();
+            // sdCardSetup();
             while (!haRespondido)
                 enviarPresionBase();
-            actualizarMpu = true;
             haRespondido = false;
             inicializado = true;
-            EEPROM.update(memInit, true);
+            // EEPROM.update(memInit, true);
         }
     }
     else
@@ -175,7 +193,7 @@ void loop()
                     leerMPU();
                     isFreeFall = true;
                     descenso = true;
-                    EEPROM.update(memDesc, true);
+                    // EEPROM.update(memDesc, true);
                 }
                 else if (data == 0x01)
                     leerMPU();
@@ -183,27 +201,43 @@ void loop()
                 {
                     isFreeFall = true;
                     descenso = true;
-                    EEPROM.update(memDesc, true);
+                    // EEPROM.update(memDesc, true);
                 }
                 actualizarMpu = true;
                 leerMpu = false;
             }
+            if (actualizarCompass)
+            {
+                compass.read();
+                actualizarCompass = false;
+            }
+
+            if (leerCompass)
+            {
+                miOrientacion = compass.getAzimuth() + compassYawCorrection;
+                deltaOrientacion = orientacionADestino - miOrientacion;
+
+                deltaOrientacion = (deltaOrientacion < (-180)) ? deltaOrientacion + 360 : deltaOrientacion;
+                deltaOrientacion = (deltaOrientacion > 180) ? deltaOrientacion - 360 : deltaOrientacion;
+
+                leerCompass = false;
+            }
+
             if (escritura)
             {
-                if (csvTelemetry)
-                {
-                    if (!transmit)
-                    {
-                        csvTelemetry.println(String(String(millis()) + comma + String(isFreeFall) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel)));
-                        csvTelemetry.flush();
-                        escritura = false;
-                    }
-                }
-                else
-                {
-                    reportar("Fallo al abrir archivo de MicroSD");
-                    escritura = false;
-                }
+                // if (csvTelemetry)
+                // {
+                //     if (!transmit)
+                //     {
+                //         csvTelemetry.println(String(String(millis()) + comma + String(isFreeFall) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel1)));
+                //         csvTelemetry.flush();
+                //     }
+                // }
+                // else
+                // {
+                //     reportar("Fallo al abrir archivo de MicroSD");
+                // }
+                escritura = false;
             }
         }
     }
@@ -248,6 +282,10 @@ void mpuSetup()
     mpu.writeData(0x1E, 2);
     mpu.writeData(0x37, 0xB0);
     mpu.calcOffsets(true, true); // gyro and accelero
+
+    reportar("MPU inicializado");
+
+    actualizarMpu = true;
 }
 
 // Inicializacion del BMP180
@@ -255,6 +293,7 @@ void bmpSetup()
 {
     errorCheck(3);
     readSensors();
+    reportar("BMP inicializado");
     bmpIsInit = true;
 }
 
@@ -262,18 +301,33 @@ void bmpSetup()
 void aht10Setup()
 {
     errorCheck(2);
+    reportar("AHT inicializado");
 }
 
 // Inicializacion de la MicroSD
 void sdCardSetup()
 {
-    if (!SD.begin(SS2))
+    while (!SD.begin(PB12))
     {
         reportar("No se pudo iniciar MicroSD1");
-        while (1)
-            ;
+        delay(500);
     }
+    reportar("Micro SD iniciado");
     csvTelemetry = SD.open("mCALCAN.csv", FILE_WRITE);
+}
+
+// Setup del modulo del compass
+void compassSetup()
+{
+    while (!compass.init())
+    {
+        reportar("Fallo al conectarse al modulo compass");
+        delay(250);
+    }
+    compass.useCalibration(true);
+    compass.setSmoothingSteps(10);
+    delay(500);
+    reportar("Compass inicializado");
 }
 
 // Subortina ISR para interrupciones
@@ -313,7 +367,7 @@ void transmitir()
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
 void telemetrySend()
 {
-    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(millis() - tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud) + comma + String(longitud)));
+    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel1) + comma + String(millis() - tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud) + comma + String(longitud)));
     if (isFreeFall)
     {
         isFreeFall = false;
@@ -374,7 +428,7 @@ void onReceive(int packetSize)
             case 20:
                 tiempoMision = millis();
                 iniciarMision = true;
-                EEPROM.update(memMision, true);
+                // EEPROM.update(memMision, true);
                 break;
 
             case 21:
@@ -383,10 +437,11 @@ void onReceive(int packetSize)
                 break;
 
             case 35:
-                wipeEeprom = true;
+                // wipeEeprom = true;
                 break;
 
             case 37:
+                EEPROM.update(memReset, 1);
                 NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
                 break;
 
@@ -410,10 +465,8 @@ void onReceive(int packetSize)
             uint8_t indicador2 = LoRaData.indexOf(',', indicador1 + 1);
             latitudAterrizaje = LoRaData.substring(codigo2 + 1, indicador1);
             longitudAterrizaje = LoRaData.substring(indicador1 + 1, indicador2);
-            Serial.print(latitudAterrizaje);
-            Serial.print(longitudAterrizaje);
-            EEPROM.put(memLat, latitudAterrizaje);
-            EEPROM.put(memLong, longitudAterrizaje);
+            // EEPROM.put(memLat, latitudAterrizaje);
+            // EEPROM.put(memLong, longitudAterrizaje);
             coordenadas = false;
         }
         if (!inicializacion)
@@ -431,14 +484,12 @@ void onReceive(int packetSize)
             if (codigomsg.toInt() == 00)
                 LoRa_Transmit(3, 77, "");
         }
-        if (wipeEeprom)
-        {
-            for (int i = 0; i < (memLong + 1); i++)
-            {
-                EEPROM.put(i, false);
-            }
-            wipeEeprom = 0;
-        }
+        // if (wipeEeprom)
+        // {
+        //     for (int i = 0; i < (memLong + 1); i++)
+        //         EEPROM.put(i, false);
+        //         wipeEeprom = 0;
+        // }
     }
 }
 
@@ -506,7 +557,7 @@ void readSensors()
         {
         case 0:
             status = pressure.startTemperature();
-            batteryLevel = analogRead(BAT);
+            batteryLevel1 = analogRead(BAT0);
             actualizarCompass = true;
             disparoMedicion++;
             break;
@@ -518,6 +569,11 @@ void readSensors()
 
         case 2:
             MQ135 = analogRead(AQS);
+            batteryLevel2 = analogRead(BAT1);
+            if (!leerCompass)
+            {
+                actualizarCompass = true;
+            }
             status = pressure.startPressure(0);
             disparoMedicion++;
             break;
@@ -540,6 +596,12 @@ void readSensors()
 void readMPU()
 {
     leerMpu = true; // Comienza la actualizacion de datos del MPU6050
+}
+
+// Funcion callback del pin DRDY para iniciar la lectura del compass
+void leerCompas()
+{
+    leerCompass = true;
 }
 
 // Lectura de los datos del sensor MPU6050
@@ -603,7 +665,6 @@ void errorCheck(char device)
         if (deberiaResetear >= 5)
         {
             reportar(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
-            delay(1000);
             deberiaResetear = 0;
         }
     }
