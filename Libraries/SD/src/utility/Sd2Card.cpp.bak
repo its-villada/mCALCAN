@@ -20,19 +20,12 @@
 #define USE_SPI_LIB
 #include <Arduino.h>
 #include "Sd2Card.h"
-#include <SPI.h> // <---- [1]
 //------------------------------------------------------------------------------
 #ifndef SOFTWARE_SPI
 #ifdef USE_SPI_LIB
-  
+
   #ifndef SDCARD_SPI
-    #define MOSI2 PB15 // <---- [2]
-    #define MISO2 PB14 // <---- [3]
-    #define SCLK2 PB10 // <---- [4]
-    #define SS2   PB9 // <---- [5]
-    SPIClass SPI_2 = SPIClass(MOSI2, MISO2, SCLK2, SS2); // <---- [6]
-    
-    #define SDCARD_SPI SPI_2  // <---- [7]
+    #define SDCARD_SPI SPI
   #endif
 
   #include <SPI.h>
