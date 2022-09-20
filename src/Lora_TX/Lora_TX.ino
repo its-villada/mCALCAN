@@ -1,3 +1,5 @@
+// #include <TinyGPS++.h>
+// #include <TinyGPSPlus.h>
 #include <AHTxx.h>
 #include <EEPROM.h>
 #include <LoRa.h>
@@ -11,7 +13,8 @@
 #include <Wire.h>
 #include "CustomQMC5883L.h"
 #include <UbxGpsNavPosllh.h>
-#include <STM32_ISR_Servo.h>
+#include <Servo.h>
+
 
 #define GPS_BAUDRATE 115200
 #define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
@@ -32,10 +35,15 @@
 #define buzzer PA8               // Pin del buzzer de recuperacion
 #define servoDerPin PB1          // Pin del servo derecha
 #define servoIzqPin PB0          // Pin del servo izquierda
+#define gpsOn PB8
 #define HW_TIMER_INTERVAL_MS 1
 #define TIMER_INTERVAL_1 5L   // Intervalo1 salta cada 5 ms
 #define TIMER_INTERVAL_2 500L // Intervalo2 salta cada 500 ms
 #define TIMER_INTERVAL_3 50L  // Intervalo3 salta cada 50 ms
+#define servoDerMaxMicros 400
+#define servoDerMinMicros 2400
+#define servoIzqMaxMicros 2400
+#define servoIzqMinMicros 400
 #define minHorizontalAcc 5000 // mm
 #define USE_STM32_TIMER_NO TIM2
 #define compassYawCorrection 0
@@ -46,6 +54,7 @@
 #define memLat 3
 #define memLong 4
 #define memReset 5
+#define memTiempo 6
 
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
@@ -55,8 +64,8 @@ MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 CustomQMC5883L compass;
 UbxGpsNavPosllh<HardwareSerial> gps(Serial);
-STM32_ISR_Servo servoIzq;
-STM32_ISR_Servo servoDer;
+Servo servoDer;
+Servo servoIzq;
 
 float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
 double T, P, pAnterior, latitud, longitud;
@@ -66,6 +75,7 @@ uint16_t MQ135, batteryLevel1, batteryLevel2, deltaOrientacion, distanciaADestin
 uint32_t humidity, tiempoMision;
 String latitudAterrizaje, longitudAterrizaje;
 
+void cansatStartUp();
 void Timer1Handler();
 void onReceive(int);
 void telemetrySend();
@@ -103,9 +113,10 @@ void setup()
     // put your setup code here, to run once:
     Serial.begin(GPS_BAUDRATE);
     Wire.begin();
-    EEPROM.begin();
+    // EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(MainS, OUTPUT);
+    pinMode(gpsOn, OUTPUT);  // FUNCIONA EN LOGICA INVERSA!
     pinMode(buzzer, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(BAT0, INPUT);
     pinMode(BAT1, INPUT);
@@ -115,72 +126,53 @@ void setup()
     digitalWrite(LED_BUILTIN, HIGH);
     digitalWrite(MainS, LOW);
     digitalWrite(buzzer, HIGH);
+    digitalWrite(gpsOn, HIGH);
 
     loraSetup(); // Setup modulo lora
 
-    if (EEPROM.read(memReset))
-    {
-        reportar("Reset Exitoso");
-        EEPROM.update(memReset, 0);
-    }
-
-    inicializacion = EEPROM.read(memInit);
-
-    if (inicializacion)
-    {
-        descenso = EEPROM.read(memDesc);
-        iniciarMision = EEPROM.read(memMision);
-        latitudAterrizaje = EEPROM.read(memLat);
-        longitudAterrizaje = EEPROM.read(memLong);
-        digitalWrite(MainS, HIGH);
-        sdCardSetup();
-        compassSetup();
-        bmpSetup();
-        aht10Setup();
-        mpuSetup();
-        GPSSetup();
-        servoSetup();
-        inicializado = true;
-    }
+    // if (EEPROM.read(memReset))
+    // {
+    //     reportar("Reset Exitoso");
+    //     EEPROM.update(memReset, 0);
+    // }
 
     timerSetup(); // Setup de interrupciones de timer
 
     attachInterrupt(digitalPinToInterrupt(INTpin), readMPU, FALLING);
     attachInterrupt(digitalPinToInterrupt(DRDY), leerCompas, FALLING);
-    LoRa.receive();
 }
 
 void loop()
 {
     if (!inicializado)
     {
+        // if (EEPROM.read(memInit))
+        // {
+        //     cansatStartUp();
+        //     tiempoMision = EEPROM.read(memTiempo);
+        //     descenso = EEPROM.read(memDesc);
+        //     iniciarMision = EEPROM.read(memMision);
+        //     latitudAterrizaje = EEPROM.read(memLat);
+        //     longitudAterrizaje = EEPROM.read(memLong);
+        //     inicializacion = false;
+        //     inicializado = true;
+        // }
+
         if (inicializacion)
         {
-            digitalWrite(MainS, HIGH);
-            compassSetup();
-            bmpSetup();
-            aht10Setup();
-            mpuSetup();
-            sdCardSetup();
-            GPSSetup();
-            servoSetup();
+            cansatStartUp();
             while (!haRespondido)
                 enviarPresionBase();
             haRespondido = false;
             inicializado = true;
-            EEPROM.update(memInit, true);
+            // EEPROM.update(memInit, true);
         }
     }
     else
     {
         if ((listoParaDespegar) || (iniciarMision))
         {
-            if (descenso && gpsDRDY)
-            {
-                servoControl();
-                gpsDRDY = false;
-            }
-
+            servoControl();
             if (cicloAht == 1)
                 beginMeasurementAht();
 
@@ -204,7 +196,7 @@ void loop()
                 leerGPS();
                 readGps = false;
             }
-            if (gpsDRDY)
+            if (descenso && gpsDRDY)
             {
                 servoControl();
                 gpsDRDY = false;
@@ -222,14 +214,14 @@ void loop()
                 {
                     leerMPU();
                     descenso = true;
-                    EEPROM.update(memDesc, true);
+                    // EEPROM.update(memDesc, true);
                 }
                 else if (data == 0x01)
                     leerMPU();
                 else if (data == 0x80)
                 {
                     descenso = true;
-                    EEPROM.update(memDesc, true);
+                    // EEPROM.update(memDesc, true);
                 }
                 actualizarMpu = true;
                 leerMpu = false;
@@ -269,6 +261,26 @@ void loop()
             }
         }
     }
+}
+
+void cansatStartUp()
+{
+    digitalWrite(gpsOn, LOW);
+    digitalWrite(MainS, HIGH);
+    delay(100);
+    compassSetup();
+    delay(100);
+    mpuSetup();
+    delay(100);
+    aht10Setup();
+    delay(100);
+    bmpSetup();
+    delay(100);
+    sdCardSetup();
+    delay(16000);
+    GPSSetup();
+    delay(100);
+    // servoSetup();
 }
 
 // Inicializacion del Timer
@@ -321,8 +333,8 @@ void bmpSetup()
 {
     errorCheck(3);
     readSensors();
-    reportar("BMP inicializado");
     bmpIsInit = true;
+    reportar("BMP inicializado");
 }
 
 // Inicializacion del AHT10
@@ -368,7 +380,8 @@ void GPSSetup()
 // Setup de los servos
 void servoSetup()
 {
-    STM32_ISR_Servos.useTimer(USE_STM32_TIMER_NO);
+    servoDer.attach(servoDerPin);
+    servoIzq.attach(servoIzqPin);
 }
 
 // Subortina ISR para interrupciones
@@ -380,12 +393,12 @@ void Timer1Handler()
 // Funcion estandard para enviar mensajes por LoRa con el Protocolo gVIE
 void LoRa_Transmit(uint8_t type, String reqs, String data)
 {
-    digitalWrite(LED_BUILTIN, LOW);
+    //digitalWrite(LED_BUILTIN, LOW);
     LoRa.beginPacket();
     LoRa.print(String("gvie," + String(type) + comma + String(reqs) + comma + data));
     LoRa.endPacket(true);
     LoRa.receive();
-    digitalWrite(LED_BUILTIN, HIGH);
+    //digitalWrite(LED_BUILTIN, HIGH);
 }
 
 // Funcion de transmision de datos a la Estacion Terrena
@@ -465,7 +478,7 @@ void onReceive(int packetSize)
             case 20:
                 tiempoMision = millis();
                 iniciarMision = true;
-                EEPROM.update(memMision, true);
+                // EEPROM.update(memMision, true);
                 break;
 
             case 21:
@@ -478,7 +491,9 @@ void onReceive(int packetSize)
                 break;
 
             case 37:
-                EEPROM.update(memReset, 1);
+                // EEPROM.put(memTiempo, (millis() - tiempoMision));
+                // EEPROM.update(memReset, 1);
+                digitalWrite(MainS, LOW);
                 NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
                 break;
 
@@ -502,8 +517,8 @@ void onReceive(int packetSize)
             uint8_t indicador2 = LoRaData.indexOf(',', indicador1 + 1);
             latitudAterrizaje = LoRaData.substring(codigo2 + 1, indicador1);
             longitudAterrizaje = LoRaData.substring(indicador1 + 1, indicador2);
-            EEPROM.put(memLat, latitudAterrizaje);
-            EEPROM.put(memLong, longitudAterrizaje);
+            // EEPROM.put(memLat, latitudAterrizaje);
+            // EEPROM.put(memLong, longitudAterrizaje);
             coordenadas = false;
         }
         if (!inicializacion)
@@ -523,8 +538,8 @@ void onReceive(int packetSize)
         }
         if (wipeEeprom)
         {
-            for (int i = 0; i < (memReset + 1); i++)
-                EEPROM.put(i, false);
+            // for (int i = 0; i < (memTiempo + 1); i++)
+            //     EEPROM.put(i, false);
             wipeEeprom = false;
         }
     }
@@ -535,7 +550,7 @@ void enviarPresionBase()
 {
     if (enviarDevuelta)
     {
-        LoRa_Transmit(0,"10", String(P));
+        LoRa_Transmit(0, "10", String(P));
         enviarDevuelta = false;
     }
 }
@@ -588,10 +603,10 @@ void readSensors()
         if (readAht == 16)
             cicloAht++;
 
-        if (readAht == 400)
+        if (readAht >= 400)
             readAht = 0;
 
-        if (cicloGps == 6)
+        if (cicloGps >= 12)
         {
             readGps = true;
             cicloGps = 0;
@@ -669,12 +684,19 @@ void leerGPS()
 
         latitud = (gps.lat / 10000000.0);
 
-        if (gps.hAcc < minHorizontalAcc && gps.hAcc > 0)
-        {
-            distanciaADestino = distanceBetween(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
-            orientacionADestino = courseTo(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
-            gpsDRDY = 1;
-        }
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+
+        // if (gps.hAcc < minHorizontalAcc && gps.hAcc > 0)
+
+        distanciaADestino = distanceBetween(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
+        orientacionADestino = courseTo(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
+        gpsDRDY = 1;
+
+        // else
+        // {
+        //     servoIzq.write(servoIzqMinMicros);
+        //     servoDer.write(servoDerMinMicros);
+        // }
     }
 }
 
@@ -719,16 +741,25 @@ void escribirArchivo()
 void errorCheck(char device)
 {
     int deberiaResetear = 0;
+    int times = 0;
     while (checkSensorStatus(device))
     {
-        digitalWrite(LED_BUILTIN, !LED_BUILTIN);
+
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
         // stop everything if could not connect to I2C device
         delay(1000);
         deberiaResetear++;
         if (deberiaResetear >= 5)
         {
+            times++;
             reportar(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
+            checkSensorStatus(device);
             deberiaResetear = 0;
+        }
+        if (times >= 3)
+        {
+            reportar(String("No se pudo iniciar el dispositivo I2C N" + String((int)device)));
+            break;
         }
     }
 }
@@ -754,56 +785,32 @@ bool checkSensorStatus(char device)
 }
 
 // Melodia para recuperar el cansat al finalizar mision
-void song(int buzzerPin)
+void song(int tonePin)
 {
-
-    tone(buzzerPin, 988);
-    delay(278);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1480);
-    delay(556);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1976);
-    delay(278);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1109);
-    delay(139);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 988);
-    delay(972);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1480);
-    delay(972);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 988);
-    delay(278);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1480);
-    delay(556);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1976);
-    delay(278);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1109);
-    delay(139);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1480);
-    delay(556);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 2960);
-    delay(556);
-    noTone(buzzerPin);
+    tone(tonePin, 987, 29.347826087);
+    delay(32.6086956522);
+    tone(tonePin, 246, 48.9130434783);
+    delay(54.347826087);
+    delay(173.913043478);
+    delay(10.8695652174);
+    tone(tonePin, 1479, 29.347826087);
+    delay(32.6086956522);
+    tone(tonePin, 369, 19.5652173913);
+    delay(21.7391304348);
+    delay(141.304347826);
+    tone(tonePin, 246, 68.4782608696);
+    delay(76.0869565217);
+    delay(152.173913043);
+    delay(54.347826087);
+    tone(tonePin, 246, 29.347826087);
+    delay(32.6086956522);
+    delay(358.695652174);
+    tone(tonePin, 369, 58.6956521739);
+    delay(65.2173913043);
+    delay(10.8695652174);
+    tone(tonePin, 987, 97.8260869565);
+    delay(108.695652174);
+    digitalWrite(buzzer, HIGH);
 }
 
 double distanceBetween(double lat1, double long1, double lat2, double long2)
@@ -847,4 +854,45 @@ double courseTo(double lat1, double long1, double lat2, double long2)
 
 void servoControl()
 {
+    // float girDerPor = 0, girIzqPor = 0, coefDist = 0; // 0% - 100%
+
+    // if (deltaOrientacion > 0)
+    // {
+    //     girDerPor = map(deltaOrientacion, 0, 180, 5, 100);
+    // }
+    // if (deltaOrientacion < 0)
+    // {
+    //     girIzqPor = map(deltaOrientacion, -180, 0, 100, 5);
+    // }
+
+    // if (deltaOrientacion >= 0 && deltaOrientacion <= 10)
+    // {
+    //     girIzqPor = girIzqPor + (100 - deltaOrientacion * 5);
+    //     girDerPor = girDerPor + (100 - deltaOrientacion * 5);
+    // }
+
+    // if (deltaOrientacion <= 0 && deltaOrientacion >= -10)
+    // {
+    //     girIzqPor = girIzqPor + (100 - deltaOrientacion * -5);
+    //     girDerPor = girDerPor + (100 - deltaOrientacion * -5);
+    // }
+
+    // coefDist = constrain(distanciaADestino / 1, 0, 1);
+
+    // girDerPor *= coefDist;
+    // girIzqPor *= coefDist;
+
+    // servoDer.write(map(constrain(girDerPor, 0, 100), 0, 100, servoDerMinMicros, servoDerMaxMicros));
+    // servoIzq.write(map(constrain(girIzqPor, 0, 100), 0, 100, servoIzqMinMicros, servoIzqMaxMicros));
+    for (int pos = 0; pos <= 180; pos += 1)
+    { // goes from 0 degrees to 180 degrees
+        // in steps of 1 degree
+        servoDer.write(pos); // tell servo to go to position in variable 'pos'
+        servoIzq.write(pos); // tell servo to go to position in variable 'pos'
+    }
+    for (int pos = 180; pos >= 0; pos -= 1)
+    {                        // goes from 180 degrees to 0 degrees
+        servoDer.write(pos); // tell servo to go to position in variable 'pos'
+        servoIzq.write(pos); // tell servo to go to position in variable 'pos'
+    }
 }
