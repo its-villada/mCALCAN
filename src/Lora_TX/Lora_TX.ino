@@ -1,5 +1,5 @@
-// #include <TinyGPS++.h>
-// #include <TinyGPSPlus.h>
+#include <TinyGPS++.h>
+#include <TinyGPSPlus.h>
 #include <AHTxx.h>
 #include <EEPROM.h>
 #include <LoRa.h>
@@ -12,7 +12,7 @@
 #include <SD.h>
 #include <Wire.h>
 #include "CustomQMC5883L.h"
-#include <UbxGpsNavPosllh.h>
+//#include <UbxGpsNavPosllh.h>
 #include <Servo.h>
 
 
@@ -56,6 +56,7 @@
 #define memReset 5
 #define memTiempo 6
 
+HardwareSerial gpsSerial(PA_9, PA_10);
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
@@ -63,9 +64,10 @@ SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 CustomQMC5883L compass;
-UbxGpsNavPosllh<HardwareSerial> gps(Serial);
+TinyGPSPlus tGPS;
 Servo servoDer;
 Servo servoIzq;
+
 
 float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
 double T, P, pAnterior, latitud, longitud;
@@ -111,7 +113,7 @@ void song(int);
 void setup()
 {
     // put your setup code here, to run once:
-    Serial.begin(GPS_BAUDRATE);
+    gpsSerial.begin(GPS_BAUDRATE);
     Wire.begin();
     // EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
@@ -373,7 +375,7 @@ void compassSetup()
 // Setup del modulo del GPS
 void GPSSetup()
 {
-    gps.begin(GPS_BAUDRATE);
+    gpsSerial.begin(GPS_BAUDRATE);
     reportar("GPS inicializado");
 }
 
@@ -428,7 +430,7 @@ void telemetrySend()
 void onReceive(int packetSize)
 {
     String LoRaData = LoRa.readString();
-    Serial.println(LoRaData);
+    //Serial.println(LoRaData);
 
     // Busca y almacena la posicion (estilo arreglo) del caracter ingresado + X posiciones
     uint8_t confirmacion0 = LoRaData.indexOf(',');            // Header
@@ -677,20 +679,22 @@ void leerMPU()
 // Lectura de los datos del sensor de GPS
 void leerGPS()
 {
-    if (gps.ready())
+    while(gpsSerial.available())
+    if (tGPS.encode(gpsSerial.read()))
     {
 
-        longitud = (gps.lon / 10000000.0);
+        longitud = (tGPS.location.lng());
 
-        latitud = (gps.lat / 10000000.0);
+        latitud = (tGPS.location.lat());
 
         digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 
-        // if (gps.hAcc < minHorizontalAcc && gps.hAcc > 0)
+        if (tGPS.location.isValid()){
 
         distanciaADestino = distanceBetween(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
         orientacionADestino = courseTo(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
         gpsDRDY = 1;
+        }
 
         // else
         // {
