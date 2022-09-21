@@ -3,8 +3,10 @@
 #include <string.h>
 #include <SFE_BMP180.h>
 #include <EEPROM.h>
+#include <SoftwareSerial.h>
 
 SFE_BMP180 pressure;
+SoftwareSerial SoftSerial(2,3); //rx,tx
 
 // Defino los pines a ser usados por el modulo transceptor LoRa
 #define CS 8                 // Pin de CS del módulo LoRa
@@ -12,6 +14,7 @@ SFE_BMP180 pressure;
 #define IRQ 7                // Pin del IRQ del módulo LoRa
 #define LED 13               // Pin del LED onboard
 #define SERIAL_BAUDRATE 9600 // Velocidad del Puerto Serie
+#define SOFTSERIAL_BAUDRATE 9600 //velocidad del puerto serie virtual
 
 #define LORA_FREQUENCY 915000000
 #define LORA_SYNC_WORD 0xDE
@@ -41,6 +44,7 @@ void setup()
     pinMode(LED, OUTPUT);
     // Incializo el Serial Monitor
     Serial.begin(SERIAL_BAUDRATE);
+    SoftSerial.begin(SOFTSERIAL_BAUDRATE);
     EEPROM.begin();
     // Turn on the transmission, reception, and Receive interrupt
     while (!Serial)
@@ -350,4 +354,12 @@ void LoRa_Transmit(uint8_t type, uint8_t reqs, String data)
     LoRa.endPacket(true);
     LoRa.receive();
     digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void serialBridge(){
+    while(SoftSerial.available())
+  Serial.print(SoftSerial.read())
+
+  while(Serial.available())
+  SoftSerial.print(Serial.read())
 }
