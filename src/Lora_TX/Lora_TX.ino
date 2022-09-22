@@ -1,3 +1,10 @@
+/* 
+Codigo hecho por alumnos del ITS Villada 7° año B, Electronica. Año 2022
+Placa: BlackPill Breakout stm32f401cc
+*/
+
+#include <TinyGPS++.h>
+#include <TinyGPSPlus.h>
 #include <AHTxx.h>
 #include <EEPROM.h>
 #include <LoRa.h>
@@ -9,52 +16,70 @@
 #include <STM32_ISR_Timer.hpp>
 #include <SD.h>
 #include <Wire.h>
+#include <QMC5883L.h>
+#include <Servo.h>
 
-#define SERIAL_BAUDRATE 9600     // Velocidad del Puerto Serie
+#define GPS_BAUDRATE 115200L
 #define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
 #define LORA_SYNC_WORD 0xDE      // Byte value to use as the sync word, defaults to 0x12
-#define LORA_POWER 17            // TX power in dB, defaults to 17. Supported values are 2 to 20 for PA_OUTPUT_PA_BOOST_PIN, and 0 to 14 for PA_OUTPUT_RFO_PIN.
+#define LORA_POWER 19            // TX power in dB, defaults to 17. Supported values are 2 to 20 for PA_OUTPUT_PA_BOOST_PIN, and 0 to 14 for PA_OUTPUT_RFO_PIN.
 #define LORA_SPREAD_FACTOR 7     // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
 #define LORA_SIG_BANDWIDTH 125E3 // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15. 6E3, 20.8E3, 31.25E3, 41.7E3, 62.5E3, 125E3, 250E3, and 500E3
 #define LORA_CODING_RATE 5       // Denominator of the coding rate, defaults to 5. Supported values are between 5 and 8, these correspond to coding rates of 4/5 and 4/8. The coding rate numerator is fixed at 4.
 #define RST PB3                  // Pin Reset del transciver LoRa
-#define IRQ PA1                  // Pin DIO0 del transciver LoRa
+#define IRQ PA4                  // Pin DIO0 del transciver LoRa
 #define NSS PA15                 // Pin CS del transciver LoRa
-#define INTpin PA2               // Pin de interrupcion del MPU6050
+#define INTpin PA3               // Pin de interrupcion del MPU6050
 #define DRDY PA11                // Pin de interrupcion del GY-273
-#define BAT PA0                  // Pin de tension de bateria
+#define BAT0 PA0                 // Pin de tension de bateria 1
+#define BAT1 PA1                 // Pin de tension de bateria 2
 #define MainS PA12               // Pin Sensors enable
-#define AQS PA4                  // Pin del sensor MQ-135
+#define AQS PA2                  // Pin del sensor MQ-135
 #define buzzer PA8               // Pin del buzzer de recuperacion
 #define servoDerPin PB1          // Pin del servo derecha
 #define servoIzqPin PB0          // Pin del servo izquierda
+#define gpsOn PB8                // Pin de activacion del GPS
 #define HW_TIMER_INTERVAL_MS 1
-#define TIMER_INTERVAL_1 5L   // Intervalo1 salta cada 5 ms
+#define TIMER_INTERVAL_1 8L   // Intervalo1 salta cada 8 ms
 #define TIMER_INTERVAL_2 500L // Intervalo2 salta cada 500 ms
 #define TIMER_INTERVAL_3 50L  // Intervalo3 salta cada 50 ms
+#define servoDerMaxMicros 400
+#define servoDerMinMicros 2400
+#define servoIzqMaxMicros 2400
+#define servoIzqMinMicros 400
+#define minHorizontalAcc 5000 // mm
+#define USE_STM32_TIMER_NO TIM2
+#define compassYawCorrection 0
 #define comma ','
 #define memInit 0
 #define memMision 1
 #define memDesc 2
 #define memLat 3
 #define memLong 4
+#define memReset 5
+#define memTiempo 6
 
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
-SPIClass mySPI_2(PB15, PB14, PB13);
 SFE_BMP180 pressure;
 MPU6050 mpu(Wire);
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
+QMC5883L compass;
+TinyGPSPlus tGPS;
+Servo servoDer;
+Servo servoIzq;
 
-float giroX, giroY, giroZ, accX, accY, accZ, ahtValue;
-double T, P, pAnterior, latitud, longitud;
-bool transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, isFreeFall = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
-uint8_t disparoMedicion = 0, readAht = 0, cicloAht = 0, preparacion = 0;
-uint16_t MQ135, batteryLevel;
+float giroX, giroY, giroZ, accX, accY, accZ, ahtValue, miOrientacion = 0;
+double T = 0, P = 0, tAnterior = 0, pAnterior = 0, latitud, longitud;
+bool busqueda = false, finalizarMision = false, gpsDRDY = false, transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
+uint8_t disparoMedicion = 0, cicloAht = 0, preparacion = 0, tiempoGps = 0;
+uint16_t MQ135, batteryLevel1, batteryLevel2, deltaOrientacion, distanciaADestino, orientacionADestino, readAht = 0;
 uint32_t humidity, tiempoMision;
 String latitudAterrizaje, longitudAterrizaje;
+uint16_t mx, my, mz;
 
+void cansatStartUp();
 void Timer1Handler();
 void onReceive(int);
 void telemetrySend();
@@ -66,75 +91,80 @@ void readHumidityAht();
 void leerMPU();
 void loraSetup();
 void bmpSetup();
+void compassSetup();
 void timerSetup();
+void servoSetup();
+void GPSSetup();
 void mpuSetup();
 void aht10Setup();
 void sdCardSetup();
 void transmitir();
 void sensorsBegin();
 void readMPU();
+void leerCompas();
+void servoControl();
 void escribirArchivo();
 void errorCheck(char);
 bool checkSensorStatus(char);
 void LoRa_Transmit(uint8_t, uint8_t, String);
-void putEepromFloat(uint8_t, float);
-float getEepromFloat(uint8_t);
+void leerGPS();
+double courseTo(double lat1, double long1, double lat2, double long2);
+double distanceBetween(double lat1, double long1, double lat2, double long2);
 void song(int);
 
 void setup()
 {
     // put your setup code here, to run once:
-    Serial.begin(9600);
     Wire.begin();
     EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(MainS, OUTPUT);
-    pinMode(BAT, INPUT);
+    pinMode(gpsOn, OUTPUT);             // FUNCIONA EN LOGICA INVERSA!
+    pinMode(buzzer, OUTPUT_OPEN_DRAIN); // FUNCIONA EN LOGICA INVERSA!
+    pinMode(BAT0, INPUT);
+    pinMode(BAT1, INPUT);
     pinMode(INTpin, INPUT);
     pinMode(DRDY, INPUT);
     pinMode(AQS, INPUT);
-    pinMode(buzzer, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
-
-    inicializacion = EEPROM.read(memInit);
-
-    if (inicializacion)
-    {
-        descenso = EEPROM.read(memDesc);
-        iniciarMision = EEPROM.read(memMision);
-        latitudAterrizaje = EEPROM.read(memLat);
-        longitudAterrizaje = EEPROM.read(memLong);
-        digitalWrite(MainS, HIGH);
-        sdCardSetup();
-        bmpSetup();
-        aht10Setup();
-        mpuSetup();
-        actualizarMpu = true;
-        inicializado = true;
-    }
+    digitalWrite(MainS, LOW);
+    digitalWrite(buzzer, HIGH);
+    digitalWrite(gpsOn, HIGH);
 
     loraSetup(); // Setup modulo lora
+
+    if (EEPROM.read(memReset))
+    {
+        reportar("Reset Exitoso");
+        EEPROM.update(memReset, 0);
+    }
 
     timerSetup(); // Setup de interrupciones de timer
 
     attachInterrupt(digitalPinToInterrupt(INTpin), readMPU, FALLING);
-    LoRa.receive();
 }
 
 void loop()
 {
     if (!inicializado)
     {
+        if (EEPROM.read(memInit))
+        {
+            cansatStartUp();
+            tiempoMision = EEPROM.read(memTiempo);
+            descenso = EEPROM.read(memDesc);
+            iniciarMision = EEPROM.read(memMision);
+            latitudAterrizaje = EEPROM.read(memLat);
+            longitudAterrizaje = EEPROM.read(memLong);
+            inicializacion = false;
+            inicializado = true;
+        }
+
         if (inicializacion)
         {
-            digitalWrite(MainS, HIGH);
-            sdCardSetup();
-            bmpSetup();
-            aht10Setup();
-            mpuSetup();
+            cansatStartUp();
             while (!haRespondido)
                 enviarPresionBase();
-            actualizarMpu = true;
             haRespondido = false;
             inicializado = true;
             EEPROM.update(memInit, true);
@@ -142,71 +172,116 @@ void loop()
     }
     else
     {
-        if ((listoParaDespegar) || (iniciarMision))
+        if (listoParaDespegar || iniciarMision)
         {
-            if (cicloAht == 1)
-                beginMeasurementAht();
+            if (!finalizarMision)
+            {
+                leerGPS();
+                if (cicloAht == 1)
+                    beginMeasurementAht();
 
-            if (cicloAht == 2)
-            {
-                readHumidityAht();
-                cicloAht = 0;
-            }
-            if (transmit)
-            {
-                telemetrySend();
-                transmit = false;
-            }
-            if (sensors)
-            {
-                readSensors();
-                sensors = false;
-            }
-            if (actualizarMpu)
-            {
-                mpu.update();
-                actualizarMpu = false;
-            }
-            if (leerMpu)
-            {
-                byte data = mpu.readData(0x3A);
-                if (data == 0x81)
+                if (cicloAht == 2)
                 {
-                    leerMPU();
-                    isFreeFall = true;
-                    descenso = true;
-                    EEPROM.update(memDesc, true);
+                    readHumidityAht();
+                    cicloAht = 0;
                 }
-                else if (data == 0x01)
-                    leerMPU();
-                else if (data == 0x80)
+                if (transmit)
                 {
-                    isFreeFall = true;
-                    descenso = true;
-                    EEPROM.update(memDesc, true);
+                    telemetrySend();
+                    transmit = false;
                 }
-                actualizarMpu = true;
-                leerMpu = false;
-            }
-            if (escritura)
-            {
-                if (csvTelemetry)
+                if (sensors)
                 {
-                    if (!transmit)
+                    readSensors();
+                    sensors = false;
+                }
+                if (descenso && gpsDRDY)
+                {
+                    servoControl();
+                    gpsDRDY = false;
+                }
+
+                if (actualizarMpu)
+                {
+                    mpu.update();
+                    actualizarMpu = false;
+                }
+                if (leerMpu)
+                {
+                    byte data = mpu.readData(0x3A);
+                    if (data == 0x81)
                     {
-                        csvTelemetry.println(String(String(millis()) + comma + String(isFreeFall) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel)));
-                        csvTelemetry.flush();
-                        escritura = false;
+                        leerMPU();
+                        descenso = true;
+                        EEPROM.update(memDesc, true);
                     }
+                    else if (data == 0x01)
+                        leerMPU();
+                    else if (data == 0x80)
+                    {
+                        descenso = true;
+                        EEPROM.update(memDesc, true);
+                    }
+                    actualizarMpu = true;
+                    leerMpu = false;
                 }
-                else
+
+                if (actualizarCompass)
                 {
-                    reportar("Fallo al abrir archivo de MicroSD");
+                    miOrientacion = compass.readHeading();
+
+                    deltaOrientacion = orientacionADestino - miOrientacion;
+
+                    deltaOrientacion = (deltaOrientacion < (-180)) ? deltaOrientacion + 360 : deltaOrientacion;
+                    deltaOrientacion = (deltaOrientacion > 180) ? deltaOrientacion - 360 : deltaOrientacion;
+
+                    actualizarCompass = false;
+                }
+
+                if (escritura)
+                {
+                    if (csvTelemetry)
+                    {
+                        if (!transmit)
+                        {
+                            csvTelemetry.println(String(String(millis()) + comma + String(descenso) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(miOrientacion) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel1) + comma + String(batteryLevel2)));
+                            csvTelemetry.flush();
+                        }
+                    }
+                    else
+                    {
+                        reportar("Fallo al abrir archivo de MicroSD");
+                    }
                     escritura = false;
                 }
             }
+            else if (busqueda)
+            {
+                song(buzzer);
+                delay(1000);
+            }
         }
     }
+}
+
+void cansatStartUp()
+{
+    digitalWrite(MainS, HIGH);
+    digitalWrite(gpsOn, LOW);
+    delay(100);
+    compassSetup();
+    delay(100);
+    mpuSetup();
+    delay(100);
+    aht10Setup();
+    delay(100);
+    bmpSetup();
+    delay(100);
+    sdCardSetup();
+    delay(7000);
+    GPSSetup();
+    delay(100);
+    servoSetup();
 }
 
 // Inicializacion del Timer
@@ -248,6 +323,10 @@ void mpuSetup()
     mpu.writeData(0x1E, 2);
     mpu.writeData(0x37, 0xB0);
     mpu.calcOffsets(true, true); // gyro and accelero
+
+    reportar("MPU inicializado");
+
+    actualizarMpu = true;
 }
 
 // Inicializacion del BMP180
@@ -256,24 +335,50 @@ void bmpSetup()
     errorCheck(3);
     readSensors();
     bmpIsInit = true;
+    reportar("BMP inicializado");
 }
 
 // Inicializacion del AHT10
 void aht10Setup()
 {
     errorCheck(2);
+    reportar("AHT inicializado");
 }
 
 // Inicializacion de la MicroSD
 void sdCardSetup()
 {
-    if (!SD.begin(SS2))
+    while (!SD.begin(PB9))
     {
         reportar("No se pudo iniciar MicroSD1");
-        while (1)
-            ;
+        delay(500);
     }
     csvTelemetry = SD.open("mCALCAN.csv", FILE_WRITE);
+    reportar("Micro SD iniciado");
+}
+
+// Setup del modulo del compass
+void compassSetup()
+{
+    compass.init();
+    compass.setSamplingRate(50);
+    delay(200);
+    miOrientacion = compass.readHeading();
+    reportar("Compass inicializado");
+}
+
+// Setup del modulo del GPS
+void GPSSetup()
+{
+    Serial.begin(GPS_BAUDRATE);
+    reportar("GPS inicializado");
+}
+
+// Setup de los servos
+void servoSetup()
+{
+    servoDer.attach(servoDerPin);
+    servoIzq.attach(servoIzqPin);
 }
 
 // Subortina ISR para interrupciones
@@ -283,7 +388,7 @@ void Timer1Handler()
 }
 
 // Funcion estandard para enviar mensajes por LoRa con el Protocolo gVIE
-void LoRa_Transmit(uint8_t type, uint8_t reqs, String data)
+void LoRa_Transmit(uint8_t type, String reqs, String data)
 {
     digitalWrite(LED_BUILTIN, LOW);
     LoRa.beginPacket();
@@ -313,11 +418,7 @@ void transmitir()
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
 void telemetrySend()
 {
-    LoRa_Transmit(1, 14, String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel) + comma + String(millis() - tiempoMision) + comma + String(isFreeFall) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud) + comma + String(longitud)));
-    if (isFreeFall)
-    {
-        isFreeFall = false;
-    }
+    LoRa_Transmit(1, "14", String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(miOrientacion) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel1) + comma + String(millis() - tiempoMision) + comma + String(descenso) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud, 6) + comma + String(longitud, 6) + comma + String(batteryLevel2)));
 }
 
 // Funcion encargada de realizar las operaciones necesarias al recibir informacion por el modulo LoRa
@@ -362,31 +463,55 @@ void onReceive(int packetSize)
             switch (codigomsg.toInt())
             {
 
+            // Comando Listo para despegar
             case 3:
                 inicializacion = true;
                 listoParaDespegar = true;
                 break;
 
+            // Comando para setear coordenadas de aterrizaje
             case 12:
                 coordenadas = true;
                 break;
 
+            // Comando inicio de mision
             case 20:
+                digitalWrite(gpsOn, HIGH);
                 tiempoMision = millis();
                 iniciarMision = true;
                 EEPROM.update(memMision, true);
                 break;
 
+            // Comando para abortar flyback
             case 21:
                 latitudAterrizaje = latitud;
                 longitudAterrizaje = longitud;
                 break;
 
+            // Comando para comenzar busqueda
+            case 26:
+                busqueda = true;
+                break;
+
+            // Comando para finalizar mision
+            case 28:
+                servoDer.detach();
+                servoIzq.detach();
+                digitalWrite(servoDerPin, LOW);
+                digitalWrite(servoIzqPin, LOW);
+                finalizarMision = true;
+                break;
+
+            // Comando para reiniciar la eeprom
             case 35:
                 wipeEeprom = true;
                 break;
 
+            // Comando para resetear el cansat
             case 37:
+                EEPROM.put(memTiempo, (millis() - tiempoMision));
+                EEPROM.update(memReset, 1);
+                digitalWrite(MainS, LOW);
                 NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
                 break;
 
@@ -395,13 +520,13 @@ void onReceive(int packetSize)
                 break;
 
             default:
-                LoRa_Transmit(3, 77, "");
+                LoRa_Transmit(3, "77", "");
                 break;
             }
         }
         if (responder)
         {
-            LoRa_Transmit(2, codigomsg.toInt(), "");
+            LoRa_Transmit(2, codigomsg, "");
             responder = false;
         }
         if (coordenadas)
@@ -410,8 +535,6 @@ void onReceive(int packetSize)
             uint8_t indicador2 = LoRaData.indexOf(',', indicador1 + 1);
             latitudAterrizaje = LoRaData.substring(codigo2 + 1, indicador1);
             longitudAterrizaje = LoRaData.substring(indicador1 + 1, indicador2);
-            Serial.print(latitudAterrizaje);
-            Serial.print(longitudAterrizaje);
             EEPROM.put(memLat, latitudAterrizaje);
             EEPROM.put(memLong, longitudAterrizaje);
             coordenadas = false;
@@ -419,25 +542,23 @@ void onReceive(int packetSize)
         if (!inicializacion)
         {
             if (codigomsg.toInt() == 20)
-                LoRa_Transmit(3, 77, "");
+                LoRa_Transmit(3, "77", "");
         }
         if (!listoParaDespegar)
         {
             if (codigomsg.toInt() == 03)
-                LoRa_Transmit(3, 77, "");
+                LoRa_Transmit(3, "77", "");
         }
         if (!iniciarMision)
         {
             if (codigomsg.toInt() == 00)
-                LoRa_Transmit(3, 77, "");
+                LoRa_Transmit(3, "77", "");
         }
         if (wipeEeprom)
         {
-            for (int i = 0; i < (memLong + 1); i++)
-            {
+            for (int i = 0; i < (memTiempo + 1); i++)
                 EEPROM.put(i, false);
-            }
-            wipeEeprom = 0;
+            wipeEeprom = false;
         }
     }
 }
@@ -447,7 +568,7 @@ void enviarPresionBase()
 {
     if (enviarDevuelta)
     {
-        LoRa_Transmit(0, 10, String(P));
+        LoRa_Transmit(0, "10", String(P));
         enviarDevuelta = false;
     }
 }
@@ -455,7 +576,7 @@ void enviarPresionBase()
 // Funcion basica de envio de errores a la Estacion Terrena
 void reportar(String data)
 {
-    LoRa_Transmit(4, 77, String(data));
+    LoRa_Transmit(4, "77", String(data));
 }
 
 // Se completa un ciclo de la lectura de sensores
@@ -476,6 +597,7 @@ void readSensors()
             // Espera que termine la medicion de Temperatura
             delay(status);
             status = pressure.getTemperature(T);
+            tAnterior = T;
             if (status != 0)
             {
                 // Comienza medicion de Presion
@@ -499,33 +621,38 @@ void readSensors()
         if (readAht == 16)
             cicloAht++;
 
-        if (readAht == 400)
+        if (readAht >= 400)
             readAht = 0;
 
         switch (disparoMedicion)
         {
         case 0:
+            if (!leerCompass)
+                actualizarCompass = true;
             status = pressure.startTemperature();
-            batteryLevel = analogRead(BAT);
-            actualizarCompass = true;
+            batteryLevel1 = analogRead(BAT0);
             disparoMedicion++;
             break;
 
         case 1:
             status = pressure.getTemperature(T);
+            if (abs(T - tAnterior) >= 3)
+                T = tAnterior;
             disparoMedicion++;
             break;
 
         case 2:
             MQ135 = analogRead(AQS);
-            status = pressure.startPressure(0);
+            batteryLevel2 = analogRead(BAT1);
+            status = pressure.startPressure(1);
             disparoMedicion++;
             break;
 
         case 3:
             status = pressure.getPressure(P, T);
-            if ((P - pAnterior) >= 100)
+            if (abs(P - pAnterior) >= 2)
                 P = pAnterior;
+            pAnterior = P;
             disparoMedicion++;
             break;
 
@@ -542,6 +669,12 @@ void readMPU()
     leerMpu = true; // Comienza la actualizacion de datos del MPU6050
 }
 
+// Funcion callback del pin DRDY para iniciar la lectura del compass
+void leerCompas()
+{
+    leerCompass = true;
+}
+
 // Lectura de los datos del sensor MPU6050
 void leerMPU()
 {
@@ -551,6 +684,33 @@ void leerMPU()
     giroX = mpu.getAngleX();
     giroY = mpu.getAngleY();
     giroZ = mpu.getAngleZ();
+}
+
+// Lectura de los datos del sensor de GPS
+void leerGPS()
+{
+    while (Serial.available())
+    {
+        if (tGPS.encode(Serial.read()))
+        {
+
+            longitud = (tGPS.location.lng());
+
+            latitud = (tGPS.location.lat());
+
+            if (tGPS.location.isValid() && (tGPS.hdop.hdop() < 2))
+            {
+                distanciaADestino = distanceBetween(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
+                orientacionADestino = courseTo(latitud, longitud, latitudAterrizaje.toDouble(), longitudAterrizaje.toDouble());
+                gpsDRDY = true;
+            }
+            else
+            {
+                servoIzq.write(servoIzqMinMicros);
+                servoDer.write(servoDerMinMicros);
+            }
+        }
+    }
 }
 
 void beginMeasurementAht()
@@ -587,6 +747,11 @@ void readHumidityAht()
 // Funcion callback del Timer para escribir en el archivo de la MicroSD
 void escribirArchivo()
 {
+    if (tiempoGps >= 70)
+        digitalWrite(gpsOn, LOW);
+    else if (iniciarMision)
+        tiempoGps++;
+
     escritura = true;
 }
 
@@ -594,17 +759,25 @@ void escribirArchivo()
 void errorCheck(char device)
 {
     int deberiaResetear = 0;
+    int times = 0;
     while (checkSensorStatus(device))
     {
-        digitalWrite(LED_BUILTIN, !LED_BUILTIN);
+
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
         // stop everything if could not connect to I2C device
         delay(1000);
         deberiaResetear++;
         if (deberiaResetear >= 5)
         {
+            times++;
             reportar(String("Error al iniciar el dispositivo I2C N" + String((int)device)));
-            delay(1000);
+            checkSensorStatus(device);
             deberiaResetear = 0;
+        }
+        if (times >= 3)
+        {
+            reportar(String("No se pudo iniciar el dispositivo I2C N" + String((int)device)));
+            break;
         }
     }
 }
@@ -624,60 +797,108 @@ bool checkSensorStatus(char device)
         return !pressure.begin(); // return begin status of bmp
         break;
     case 4:
-        // innit de la brujula
         break;
     }
 }
 
 // Melodia para recuperar el cansat al finalizar mision
-void song(int buzzerPin)
+void song(int tonePin)
 {
+    tone(tonePin, 987, 29.347826087);
+    delay(32.6086956522);
+    tone(tonePin, 246, 48.9130434783);
+    delay(54.347826087);
+    delay(173.913043478);
+    delay(10.8695652174);
+    tone(tonePin, 1479, 29.347826087);
+    delay(32.6086956522);
+    tone(tonePin, 369, 19.5652173913);
+    delay(21.7391304348);
+    delay(141.304347826);
+    tone(tonePin, 246, 68.4782608696);
+    delay(76.0869565217);
+    delay(152.173913043);
+    delay(54.347826087);
+    tone(tonePin, 246, 29.347826087);
+    delay(32.6086956522);
+    delay(358.695652174);
+    tone(tonePin, 369, 58.6956521739);
+    delay(65.2173913043);
+    delay(10.8695652174);
+    tone(tonePin, 987, 97.8260869565);
+    delay(108.695652174);
+    digitalWrite(buzzer, HIGH);
+}
 
-    tone(buzzerPin, 988);
-    delay(278);
-    noTone(buzzerPin);
+double distanceBetween(double lat1, double long1, double lat2, double long2)
+{
+    // returns distance in meters between two positions, both specified
+    double delta = radians(long1 - long2);
+    double sdlong = sin(delta);
+    double cdlong = cos(delta);
+    lat1 = radians(lat1);
+    lat2 = radians(lat2);
+    double slat1 = sin(lat1);
+    double clat1 = cos(lat1);
+    double slat2 = sin(lat2);
+    double clat2 = cos(lat2);
+    delta = (clat1 * slat2) - (slat1 * clat2 * cdlong);
+    delta = sq(delta);
+    delta += sq(clat2 * sdlong);
+    delta = sqrt(delta);
+    double denom = (slat1 * slat2) + (clat1 * clat2 * cdlong);
+    delta = atan2(delta, denom);
+    return delta * 6372795;
+}
 
-    tone(buzzerPin, 1480);
-    delay(556);
-    noTone(buzzerPin);
+double courseTo(double lat1, double long1, double lat2, double long2)
+{
+    // returns course in degrees (North=0, West=270) from position 1 to position 2,
 
-    tone(buzzerPin, 1976);
-    delay(278);
-    noTone(buzzerPin);
+    double dlon = radians(long2 - long1);
+    lat1 = radians(lat1);
+    lat2 = radians(lat2);
+    double a1 = sin(dlon) * cos(lat2);
+    double a2 = sin(lat1) * cos(lat2) * cos(dlon);
+    a2 = cos(lat1) * sin(lat2) - a2;
+    a2 = atan2(a1, a2);
+    if (a2 < 0.0)
+    {
+        a2 += TWO_PI;
+    }
+    return degrees(a2);
+}
 
-    tone(buzzerPin, 1109);
-    delay(139);
-    noTone(buzzerPin);
+void servoControl()
+{
+    float girDerPor = 0, girIzqPor = 0, coefDist = 0; // 0% - 100%
 
-    tone(buzzerPin, 988);
-    delay(972);
-    noTone(buzzerPin);
+    if (deltaOrientacion > 0)
+    {
+        girDerPor = map(deltaOrientacion, 0, 180, 5, 100);
+    }
+    if (deltaOrientacion < 0)
+    {
+        girIzqPor = map(deltaOrientacion, -180, 0, 100, 5);
+    }
 
-    tone(buzzerPin, 1480);
-    delay(972);
-    noTone(buzzerPin);
+    if (deltaOrientacion >= 0 && deltaOrientacion <= 10)
+    {
+        girIzqPor = girIzqPor + (100 - deltaOrientacion * 5);
+        girDerPor = girDerPor + (100 - deltaOrientacion * 5);
+    }
 
-    tone(buzzerPin, 988);
-    delay(278);
-    noTone(buzzerPin);
+    if (deltaOrientacion <= 0 && deltaOrientacion >= -10)
+    {
+        girIzqPor = girIzqPor + (100 - deltaOrientacion * -5);
+        girDerPor = girDerPor + (100 - deltaOrientacion * -5);
+    }
 
-    tone(buzzerPin, 1480);
-    delay(556);
-    noTone(buzzerPin);
+    coefDist = constrain(distanciaADestino / 10, 0, 1);
 
-    tone(buzzerPin, 1976);
-    delay(278);
-    noTone(buzzerPin);
+    girDerPor *= coefDist;
+    girIzqPor *= coefDist;
 
-    tone(buzzerPin, 1109);
-    delay(139);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 1480);
-    delay(556);
-    noTone(buzzerPin);
-
-    tone(buzzerPin, 2960);
-    delay(556);
-    noTone(buzzerPin);
+    servoDer.write(map(constrain(girDerPor, 0, 100), 0, 100, servoDerMinMicros, servoDerMaxMicros));
+    servoIzq.write(map(constrain(girIzqPor, 0, 100), 0, 100, servoIzqMinMicros, servoIzqMaxMicros));
 }
