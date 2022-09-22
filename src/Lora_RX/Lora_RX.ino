@@ -1,3 +1,9 @@
+/* 
+Codigo hecho por alumnos del ITS Villada 7° año B, Electronica. Año 2022
+Placa: Adafruit LoRa 32u4
+
+*/
+
 #include <SPI.h>
 #include <LoRa.h>
 #include <string.h>
@@ -15,7 +21,7 @@ SFE_BMP180 pressure;
 
 #define LORA_FREQUENCY 915000000
 #define LORA_SYNC_WORD 0xDE
-#define LORA_POWER 17            // TX power in dB, defaults to 17.
+#define LORA_POWER 19            // TX power in dB, defaults to 17.
 #define LORA_SPREAD_FACTOR 7     // Spreading factor, defaults to 7. Supported values are between 6 and 12 (En Argentina se puede utilizar entre 7 a 10)
 #define LORA_SIG_BANDWIDTH 125E3 // Signal bandwidth in Hz, defaults to 125E3. Supported values are 7.8E3, 10.4E3, 15.6E3, 20.8E3, 31.25E3, 41.7E3, 62. 5E3, 125E3, 250E3, and 500E3
 #define LORA_CODING_RATE 5
@@ -27,10 +33,9 @@ SFE_BMP180 pressure;
 
 float presionBase;
 double altitud;
-bool responder = false, haRespondido = false, noPudoProcesar = false, inicializacion = false, error = false, cansatReset = false, telemetria = false, serial = false;
+bool responder = false, inicializacion = false, error = false, cansatReset = false, telemetria = false, serial = false, altitudAnterior = 0, altitudMax = 0;
 uint8_t comandoFracasado;
-String LoRaData, presion, data = "", recepcionSerial, latencia, tiempoAnterior;
-uint32_t tiempoAnterior2, tiempoPresente;
+String LoRaData, presion, data = "", recepcionSerial, latencia, sAltitud;
 
 void (*resetFunc)(void) = 0;
 void LoRa_Transmit(uint8_t, uint8_t, String);
@@ -74,7 +79,6 @@ void setup()
 
 void loop()
 {
-    tiempoPresente = millis();
     if (Serial.available())
     {
         recepcionSerial = Serial.readString();
@@ -83,44 +87,11 @@ void loop()
     }
     if (serial)
     {
-        int confirmacion0 = recepcionSerial.indexOf(',');
-        int tipo1 = recepcionSerial.indexOf(',', confirmacion0 + 1); // Tipo de mensaje
-        String tipomsg = recepcionSerial.substring(confirmacion0 + 1, tipo1);
-        if ((tiempoPresente - tiempoAnterior2) >= intervalo)
-        {
-            tiempoAnterior2 = millis();
-            LoRa.beginPacket();
-            LoRa.print(recepcionSerial);
-            LoRa.endPacket(true);
-            LoRa.receive();
-            if (tipomsg.toInt() != 0)
-            {
-                serial = false;
-                comandoFracasado = 0;
-            }
-            else
-                comandoFracasado++;
-        }
-    }
-    if (noPudoProcesar)
-    {
+        LoRa.beginPacket();
+        LoRa.print(recepcionSerial);
+        LoRa.endPacket(true);
+        LoRa.receive();
         serial = false;
-        Serial.println("El comando no se pudo procesar");
-        comandoFracasado = 0;
-        noPudoProcesar = false;
-    }
-    else if (comandoFracasado >= 4)
-    {
-        serial = false;
-        Serial.println("Comando Fracasado");
-        comandoFracasado = 0;
-    }
-    else if (haRespondido)
-    {
-        serial = false;
-        comandoFracasado = 0;
-        Serial.println("Comando Exitoso");
-        haRespondido = false;
     }
 }
 
@@ -151,11 +122,11 @@ void onReceive(int packetSize)
             break;
 
         case 2:
-            haRespondido = true; // Significa que el paquete enviado es para confirmar un comando
+            Serial.println(LoRaData);
             break;
 
         case 3:
-            noPudoProcesar = true; // Significa que el paquete enviado no pudo ser procesado
+            Serial.println(LoRaData);
             break;
 
         case 4:
@@ -166,31 +137,50 @@ void onReceive(int packetSize)
             break;
         }
 
-        if (!haRespondido && !noPudoProcesar)
+        switch (codigomsg.toInt())
         {
-            switch (codigomsg.toInt())
+
+        case 37:
+            resetFunc(); // El mensaje recibido es para resetear el sistema
+            break;
+
+        case 10:
+            inicializacion = true; // El mensaje recibido es para inicializar un dato
+            break;
+
+        case 14:
+            telemetria = true;
+            break;
+
+        case 77:
+            // Indefinido
+            break;
+
+        default:
+            break;
+        }
+
+        // Se obtiene la presion base y queda guardada
+        if (inicializacion)
+        {
+            int indicadorP = LoRaData.indexOf(',', codigo2 + 1);
+            presion = LoRaData.substring(codigo2 + 1, indicadorP);
+            presionBase = presion.toFloat();
+            if (presionBase <= 500)
             {
-
-            case 37:
-                resetFunc(); // El mensaje recibido es para resetear el sistema
-                break;
-
-            case 10:
-                inicializacion = true; // El mensaje recibido es para inicializar un dato
-                break;
-
-            case 14:
-                telemetria = true;
-                break;
-
-            case 77:
-                // Indefinido
-                break;
-
-            default:
-                break;
+                Serial.println("Error obteniendo la presion Base");
+                inicializacion = false;
+            }
+            else
+            {
+                Serial.println("Presion Base:" + presion);
+                Serial.println(presionBase);
+                EEPROM.put(0, presionBase);
+                responder = true;
+                inicializacion = false;
             }
         }
+
         // Recepcion de telemetria raw
         if (telemetria)
         {
@@ -209,6 +199,7 @@ void onReceive(int packetSize)
             int indicador13 = LoRaData.indexOf(',', indicador12 + 1);
             int indicador14 = LoRaData.indexOf(',', indicador13 + 1);
             int indicador15 = LoRaData.indexOf(',', indicador14 + 1);
+            int indicador16 = LoRaData.indexOf(',', indicador15 + 1);
 
             String temperatura = LoRaData.substring(codigo2 + 1, indicador1);
 
@@ -236,7 +227,7 @@ void onReceive(int packetSize)
 
             String longitud = LoRaData.substring(indicador14 + 1, indicador15);
 
-            calidadDeAire = (calidadDeAire.toInt() - 255);
+            String bat2 = LoRaData.substring(indicador15 + 1, indicador16);
 
             if (presionBase <= 500)
             {
@@ -245,57 +236,36 @@ void onReceive(int packetSize)
                 Serial.println(presionBase);
             }
 
+            calidadDeAire = calidadDeAire.toInt() - 355;
+
             if (presion.toDouble() >= 700)
-            {
                 altitud = pressure.altitude(presion.toDouble(), presionBase);
-            }
+
+            if (altitud >= altitudAnterior)
+                altitudMax = altitud;
+            if (altitud >= 10)
+                sAltitud = altitud - 10;
+            if (altitud <= 0)
+                sAltitud = "0.00";
+            if (altitud <= 5 && altitudMax >= 300)
+                LoRa_Transmit(1, 28, "");
 
             // Calculo de valores crudos recibidos desde el satelite
 
-            String sAltitud = String(altitud, 2);
+            sAltitud = String(altitud, 2);
 
-            if (sAltitud.toDouble() >= 10)
-            {
-                sAltitud = sAltitud.toDouble() - 10;
-            }
-            if (sAltitud.toDouble() <= 0)
-            {
-                sAltitud = "0.00";
-            }
+            bat = ((bat.toInt() * 3.7) / 1023);
 
-            bat = ((bat.toInt() * 100) / 1023);
+            bat2 = ((bat2.toInt() * 3.7) / 1023);
 
             vel1 = vel1.toDouble() * 9.8066;
             vel2 = vel2.toDouble() * 9.8066;
             vel3 = vel3.toDouble() * 9.8066;
 
-            latencia = (tiempo.toDouble() - tiempoAnterior.toDouble());
-
             // Printeo de los datos recibidos
-
-            Serial.println(tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "%" + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + latencia);
-            tiempoAnterior = tiempo;
+            Serial.println("gvie,1,14," + tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + bat2);
             telemetria = false;
-        }
-        // Se obtiene la presion base y queda guardada
-        if (inicializacion)
-        {
-            int indicadorP = LoRaData.indexOf(',', codigo2 + 1);
-            presion = LoRaData.substring(codigo2 + 1, indicadorP);
-            presionBase = presion.toFloat();
-            if (presionBase <= 500)
-            {
-                Serial.println("Error obteniendo la presion Base");
-                responder = false;
-            }
-            else
-            {
-                Serial.println("Presion Base:" + presion);
-                Serial.println(presionBase);
-                EEPROM.put(0, presionBase);
-                responder = true;
-                inicializacion = false;
-            }
+            altitudAnterior = altitud;
         }
         // Se responde a algun mensaje
         if (responder)
@@ -313,9 +283,7 @@ void onReceive(int packetSize)
         }
         // Se envia el reset del cansat
         if (cansatReset)
-        {
             resetCansat();
-        }
     }
 }
 
@@ -323,10 +291,7 @@ void onReceive(int packetSize)
 void confirmacion(uint8_t codigomsg)
 {
     digitalWrite(LED_BUILTIN, HIGH);
-    LoRa.beginPacket();
     LoRa_Transmit(2, codigomsg, "");
-    LoRa.endPacket(true);
-    LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
 }
 
@@ -334,10 +299,7 @@ void confirmacion(uint8_t codigomsg)
 void resetCansat()
 {
     digitalWrite(LED_BUILTIN, HIGH);
-    LoRa.beginPacket();
     LoRa_Transmit(1, 37, "");
-    LoRa.endPacket(true);
-    LoRa.receive();
     digitalWrite(LED_BUILTIN, LOW);
 }
 
