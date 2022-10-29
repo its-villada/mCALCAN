@@ -1,8 +1,4 @@
-/* 
-Codigo hecho por alumnos del ITS Villada 7° año B, Electronica. Año 2022
-Placa: BlackPill Breakout stm32f401cc
-*/
-
+#include <SFE_BMP180.h>
 #include <TinyGPS++.h>
 #include <TinyGPSPlus.h>
 #include <AHTxx.h>
@@ -16,7 +12,7 @@ Placa: BlackPill Breakout stm32f401cc
 #include <STM32_ISR_Timer.hpp>
 #include <SD.h>
 #include <Wire.h>
-#include <QMC5883L.h>
+#include "MPU9250.h"
 #include <Servo.h>
 
 #define GPS_BAUDRATE 115200L
@@ -40,7 +36,7 @@ Placa: BlackPill Breakout stm32f401cc
 #define servoIzqPin PB0          // Pin del servo izquierda
 #define gpsOn PB8                // Pin de activacion del GPS
 #define HW_TIMER_INTERVAL_MS 1
-#define TIMER_INTERVAL_1 8L   // Intervalo1 salta cada 8 ms
+#define TIMER_INTERVAL_1 8L  // Intervalo1 salta cada 8 ms
 #define TIMER_INTERVAL_2 500L // Intervalo2 salta cada 500 ms
 #define TIMER_INTERVAL_3 50L  // Intervalo3 salta cada 50 ms
 #define servoDerMaxMicros 400
@@ -49,7 +45,6 @@ Placa: BlackPill Breakout stm32f401cc
 #define servoIzqMinMicros 400
 #define minHorizontalAcc 5000 // mm
 #define USE_STM32_TIMER_NO TIM2
-#define compassYawCorrection 0
 #define comma ','
 #define memInit 0
 #define memMision 1
@@ -58,32 +53,31 @@ Placa: BlackPill Breakout stm32f401cc
 #define memLong 4
 #define memReset 5
 #define memTiempo 6
+#define memBaseline 7
+#define MPUaddress 0x68
 
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
 SFE_BMP180 pressure;
-MPU6050 mpu(Wire);
+MPU9250 mpu;
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
-QMC5883L compass;
 TinyGPSPlus tGPS;
 Servo servoDer;
 Servo servoIzq;
 
-float giroX, giroY, giroZ, accX, accY, accZ, ahtValue, miOrientacion = 0;
+float giroX, giroY, giroZ, accX, accY, accZ, ahtValue, miOrientacion = 0, baseline, mx, my, mz, altitud, altitudMax = 0;
 double T = 0, P = 0, tAnterior = 0, pAnterior = 0, latitud, longitud;
-bool busqueda = false, finalizarMision = false, gpsDRDY = false, transmit = false, sensors = false, bmpIsInit = false, actualizarMpu = false, leerMpu = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
+bool busqueda = false, finalizarMision = false, gpsDRDY = false, transmit = false, sensors = false, actualizarMpu = false, leerMpu = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
 uint8_t disparoMedicion = 0, cicloAht = 0, preparacion = 0, tiempoGps = 0;
 uint16_t MQ135, batteryLevel1, batteryLevel2, deltaOrientacion, distanciaADestino, orientacionADestino, readAht = 0;
 uint32_t humidity, tiempoMision;
 String latitudAterrizaje, longitudAterrizaje;
-uint16_t mx, my, mz;
 
 void cansatStartUp();
 void Timer1Handler();
 void onReceive(int);
 void telemetrySend();
-void enviarPresionBase();
 void reportar(String);
 void readSensors();
 void beginMeasurementAht();
@@ -91,7 +85,6 @@ void readHumidityAht();
 void leerMPU();
 void loraSetup();
 void bmpSetup();
-void compassSetup();
 void timerSetup();
 void servoSetup();
 void GPSSetup();
@@ -101,7 +94,6 @@ void sdCardSetup();
 void transmitir();
 void sensorsBegin();
 void readMPU();
-void leerCompas();
 void servoControl();
 void escribirArchivo();
 void errorCheck(char);
@@ -116,7 +108,7 @@ void setup()
 {
     // put your setup code here, to run once:
     Wire.begin();
-    EEPROM.begin();
+    // EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(MainS, OUTPUT);
     pinMode(gpsOn, OUTPUT);             // FUNCIONA EN LOGICA INVERSA!
@@ -133,11 +125,11 @@ void setup()
 
     loraSetup(); // Setup modulo lora
 
-    if (EEPROM.read(memReset))
-    {
-        reportar("Reset Exitoso");
-        EEPROM.update(memReset, 0);
-    }
+    // if (EEPROM.read(memReset))
+    // {
+    //     reportar("Reset Exitoso");
+    //     EEPROM.update(memReset, 0);
+    // }
 
     timerSetup(); // Setup de interrupciones de timer
 
@@ -148,26 +140,25 @@ void loop()
 {
     if (!inicializado)
     {
-        if (EEPROM.read(memInit))
-        {
-            cansatStartUp();
-            tiempoMision = EEPROM.read(memTiempo);
-            descenso = EEPROM.read(memDesc);
-            iniciarMision = EEPROM.read(memMision);
-            latitudAterrizaje = EEPROM.read(memLat);
-            longitudAterrizaje = EEPROM.read(memLong);
-            inicializacion = false;
-            inicializado = true;
-        }
+        // if (EEPROM.read(memInit))
+        // {
+        //     cansatStartUp();
+        //     tiempoMision = EEPROM.read(memTiempo);
+        //     descenso = EEPROM.read(memDesc);
+        //     baseline = EEPROM.read(memBaseline);
+        //     iniciarMision = EEPROM.read(memMision);
+        //     latitudAterrizaje = EEPROM.read(memLat);
+        //     longitudAterrizaje = EEPROM.read(memLong);
+        //     inicializacion = false;
+        //     inicializado = true;
+        // }
 
         if (inicializacion)
         {
             cansatStartUp();
-            while (!haRespondido)
-                enviarPresionBase();
             haRespondido = false;
             inicializado = true;
-            EEPROM.update(memInit, true);
+            // EEPROM.update(memInit, true);
         }
     }
     else
@@ -176,7 +167,9 @@ void loop()
         {
             if (!finalizarMision)
             {
+
                 leerGPS();
+
                 if (cicloAht == 1)
                     beginMeasurementAht();
 
@@ -208,43 +201,38 @@ void loop()
                 }
                 if (leerMpu)
                 {
-                    byte data = mpu.readData(0x3A);
+
+                    Wire.beginTransmission(MPUaddress);
+                    Wire.write(0x3A); // Registro de status de interrupciones
+                    Wire.endTransmission();
+                    Wire.requestFrom(MPUaddress, (uint8_t)1); // Se pide la informacion del registro anterior
+
+                    byte data = Wire.read();
+
                     if (data == 0x81)
                     {
                         leerMPU();
                         descenso = true;
-                        EEPROM.update(memDesc, true);
+                        // EEPROM.update(memDesc, true);
                     }
                     else if (data == 0x01)
                         leerMPU();
                     else if (data == 0x80)
                     {
                         descenso = true;
-                        EEPROM.update(memDesc, true);
+                        // EEPROM.update(memDesc, true);
                     }
                     actualizarMpu = true;
                     leerMpu = false;
                 }
 
-                if (actualizarCompass)
-                {
-                    miOrientacion = compass.readHeading();
-
-                    deltaOrientacion = orientacionADestino - miOrientacion;
-
-                    deltaOrientacion = (deltaOrientacion < (-180)) ? deltaOrientacion + 360 : deltaOrientacion;
-                    deltaOrientacion = (deltaOrientacion > 180) ? deltaOrientacion - 360 : deltaOrientacion;
-
-                    actualizarCompass = false;
-                }
-
-                if (escritura)
+                if (escritura && !listoParaDespegar)
                 {
                     if (csvTelemetry)
                     {
                         if (!transmit)
                         {
-                            csvTelemetry.println(String(String(millis()) + comma + String(descenso) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(miOrientacion) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel1) + comma + String(batteryLevel2)));
+                            csvTelemetry.println(String(String(millis() - tiempoMision) + comma + String(altitud) + comma + String(descenso) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel1)));
                             csvTelemetry.flush();
                         }
                     }
@@ -255,10 +243,18 @@ void loop()
                     escritura = false;
                 }
             }
-            else if (busqueda)
+            else
             {
-                song(buzzer);
-                delay(1000);
+                servoDer.detach();
+                servoIzq.detach();
+                digitalWrite(servoDerPin, LOW);
+                digitalWrite(servoIzqPin, LOW);
+                digitalWrite(MainS, LOW);
+                if (busqueda)
+                {
+                    song(buzzer);
+                    delay(1000);
+                }
             }
         }
     }
@@ -269,8 +265,6 @@ void cansatStartUp()
     digitalWrite(MainS, HIGH);
     digitalWrite(gpsOn, LOW);
     delay(100);
-    compassSetup();
-    delay(100);
     mpuSetup();
     delay(100);
     aht10Setup();
@@ -278,10 +272,10 @@ void cansatStartUp()
     bmpSetup();
     delay(100);
     sdCardSetup();
-    delay(7000);
+    delay(100);
     GPSSetup();
     delay(100);
-    servoSetup();
+    // servoSetup();
 }
 
 // Inicializacion del Timer
@@ -318,23 +312,59 @@ void mpuSetup()
 {
     errorCheck(1);
 
-    mpu.writeData(0x38, 0x81);
-    mpu.writeData(0x1D, 17);
-    mpu.writeData(0x1E, 2);
-    mpu.writeData(0x37, 0xB0);
-    mpu.calcOffsets(true, true); // gyro and accelero
+    reportar("Accel Gyro calibration will start in 5sec.");
+    reportar("Please leave the device still on the flat plane.");
+    mpu.verbose(true);
+    delay(5000);
+    mpu.calibrateAccelGyro();
+
+    reportar("Mag calibration will start in 5sec.");
+    reportar("Please Wave device in a figure eight until done.");
+    delay(5000);
+    mpu.calibrateMag();
+
+    reportar("Calibration Complete");
+
+    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
+    Wire.write(0x38);                   // Registro de interrupciones
+    Wire.write(0x81);                   // Se activa interrupcion de datos y de caida libre
+    Wire.endTransmission();
+
+    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
+    Wire.write(0x1D);                   // Registro de free fall threshold
+    Wire.write(17);
+    Wire.endTransmission();
+
+    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
+    Wire.write(0x1E);                   // Registro de free fall duration
+    Wire.write(0x2);
+    Wire.endTransmission();
+
+    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
+    Wire.write(0x37);                   // Registro configuracion del pin int
+    Wire.write(0xB0);
+    Wire.endTransmission();
 
     reportar("MPU inicializado");
 
     actualizarMpu = true;
 }
 
-// Inicializacion del BMP180
+// Inicializacion del BMP280
 void bmpSetup()
 {
+    char status;
     errorCheck(3);
-    readSensors();
-    bmpIsInit = true;
+    status = pressure.startTemperature();
+    delay(status);
+    pressure.getTemperature(T);
+    tAnterior = T;
+    status = pressure.startPressure(3);
+    delay(status);
+    status = pressure.getPressure(P, T);
+    pAnterior = P;
+    baseline = P;
+    EEPROM.update(memBaseline, baseline);
     reportar("BMP inicializado");
 }
 
@@ -355,16 +385,6 @@ void sdCardSetup()
     }
     csvTelemetry = SD.open("mCALCAN.csv", FILE_WRITE);
     reportar("Micro SD iniciado");
-}
-
-// Setup del modulo del compass
-void compassSetup()
-{
-    compass.init();
-    compass.setSamplingRate(50);
-    delay(200);
-    miOrientacion = compass.readHeading();
-    reportar("Compass inicializado");
 }
 
 // Setup del modulo del GPS
@@ -418,7 +438,7 @@ void transmitir()
 // Funcion que envia la telemetria por el modulo LoRa a la estacion terrena
 void telemetrySend()
 {
-    LoRa_Transmit(1, "14", String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(miOrientacion) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel1) + comma + String(millis() - tiempoMision) + comma + String(descenso) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud, 6) + comma + String(longitud, 6) + comma + String(batteryLevel2)));
+    LoRa_Transmit(1, "14", String(String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(miOrientacion) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(batteryLevel1) + comma + String(millis() - tiempoMision) + comma + String(descenso) + comma + String(MQ135) + comma + String(ahtValue) + comma + String(latitud, 6) + comma + String(longitud, 6) + comma + String(batteryLevel2) + comma + String(altitud)));
 }
 
 // Funcion encargada de realizar las operaciones necesarias al recibir informacion por el modulo LoRa
@@ -463,54 +483,38 @@ void onReceive(int packetSize)
             switch (codigomsg.toInt())
             {
 
-            // Comando Listo para despegar
             case 3:
                 inicializacion = true;
                 listoParaDespegar = true;
                 break;
 
-            // Comando para setear coordenadas de aterrizaje
             case 12:
                 coordenadas = true;
                 break;
 
-            // Comando inicio de mision
             case 20:
                 digitalWrite(gpsOn, HIGH);
                 tiempoMision = millis();
                 iniciarMision = true;
-                EEPROM.update(memMision, true);
+                // EEPROM.update(memMision, true);
                 break;
 
-            // Comando para abortar flyback
             case 21:
                 latitudAterrizaje = latitud;
                 longitudAterrizaje = longitud;
                 break;
 
-            // Comando para comenzar busqueda
             case 26:
                 busqueda = true;
                 break;
 
-            // Comando para finalizar mision
-            case 28:
-                servoDer.detach();
-                servoIzq.detach();
-                digitalWrite(servoDerPin, LOW);
-                digitalWrite(servoIzqPin, LOW);
-                finalizarMision = true;
-                break;
-
-            // Comando para reiniciar la eeprom
             case 35:
                 wipeEeprom = true;
                 break;
 
-            // Comando para resetear el cansat
             case 37:
-                EEPROM.put(memTiempo, (millis() - tiempoMision));
-                EEPROM.update(memReset, 1);
+                // EEPROM.put(memTiempo, (millis() - tiempoMision));
+                // EEPROM.update(memReset, 1);
                 digitalWrite(MainS, LOW);
                 NVIC_SystemReset(); // El mensaje recibido es para resetear el sistema
                 break;
@@ -535,8 +539,8 @@ void onReceive(int packetSize)
             uint8_t indicador2 = LoRaData.indexOf(',', indicador1 + 1);
             latitudAterrizaje = LoRaData.substring(codigo2 + 1, indicador1);
             longitudAterrizaje = LoRaData.substring(indicador1 + 1, indicador2);
-            EEPROM.put(memLat, latitudAterrizaje);
-            EEPROM.put(memLong, longitudAterrizaje);
+            // EEPROM.put(memLat, latitudAterrizaje);
+            // EEPROM.put(memLong, longitudAterrizaje);
             coordenadas = false;
         }
         if (!inicializacion)
@@ -556,20 +560,10 @@ void onReceive(int packetSize)
         }
         if (wipeEeprom)
         {
-            for (int i = 0; i < (memTiempo + 1); i++)
-                EEPROM.put(i, false);
+            // for (int i = 0; i < (memBaseline + 1); i++)
+            //     EEPROM.put(i, false);
             wipeEeprom = false;
         }
-    }
-}
-
-// Funcion que envia la presion base a la Estacion Terrena
-void enviarPresionBase()
-{
-    if (enviarDevuelta)
-    {
-        LoRa_Transmit(0, "10", String(P));
-        enviarDevuelta = false;
     }
 }
 
@@ -588,78 +582,62 @@ void sensorsBegin()
 // Funcion que lee todos los sensores a su maxima velocidad. Controlada por banderas de interrupcion
 void readSensors()
 {
-    char status;
-    if (!bmpIsInit)
+    readAht++;
+    if (readAht == 1)
+        cicloAht++;
+
+    if (readAht == 16)
+        cicloAht++;
+
+    if (readAht >= 400)
+        readAht = 0;
+
+    switch (disparoMedicion)
     {
-        status = pressure.startTemperature();
-        if (status != 0)
+    case 0:
+        if (!leerCompass)
+            actualizarCompass = true;
+        pressure.startTemperature();
+        batteryLevel1 = analogRead(BAT0);
+        disparoMedicion++;
+        break;
+
+    case 1:
+        pressure.getTemperature(T);
+        if (abs(T - tAnterior) >= 3)
+            T = tAnterior;
+        disparoMedicion++;
+        break;
+
+    case 2:
+        MQ135 = analogRead(AQS);
+        batteryLevel2 = analogRead(BAT1);
+        pressure.startPressure(1);
+        disparoMedicion++;
+        break;
+
+    case 3:
+        pressure.getPressure(P, T);
+        if (abs(P - pAnterior) >= 2)
+            P = pAnterior;
+        pAnterior = P;
+        pressure.altitude(P, baseline);
+        if (altitud >= altitudMax)
+            altitudMax = altitud;
+        if (altitud >= 10)
+            altitud = altitud - 10;
+        if (altitud <= 0)
+            altitud = 0;
+        if (altitud <= 10 && altitudMax >= 50)
         {
-            // Espera que termine la medicion de Temperatura
-            delay(status);
-            status = pressure.getTemperature(T);
-            tAnterior = T;
-            if (status != 0)
-            {
-                // Comienza medicion de Presion
-                status = pressure.startPressure(3);
-                if (status != 0)
-                {
-                    // Espera que termine la medicion de Presion
-                    delay(status);
-                    status = pressure.getPressure(P, T);
-                    pAnterior = P;
-                }
-            }
+            finalizarMision = true;
         }
-    }
-    else
-    {
-        readAht++;
-        if (readAht == 1)
-            cicloAht++;
+        disparoMedicion++;
+        break;
 
-        if (readAht == 16)
-            cicloAht++;
-
-        if (readAht >= 400)
-            readAht = 0;
-
-        switch (disparoMedicion)
-        {
-        case 0:
-            if (!leerCompass)
-                actualizarCompass = true;
-            status = pressure.startTemperature();
-            batteryLevel1 = analogRead(BAT0);
-            disparoMedicion++;
-            break;
-
-        case 1:
-            status = pressure.getTemperature(T);
-            if (abs(T - tAnterior) >= 3)
-                T = tAnterior;
-            disparoMedicion++;
-            break;
-
-        case 2:
-            MQ135 = analogRead(AQS);
-            batteryLevel2 = analogRead(BAT1);
-            status = pressure.startPressure(1);
-            disparoMedicion++;
-            break;
-
-        case 3:
-            status = pressure.getPressure(P, T);
-            if (abs(P - pAnterior) >= 2)
-                P = pAnterior;
-            pAnterior = P;
-            disparoMedicion++;
-            break;
-
-        default:
-            disparoMedicion = false;
-            break;
-        }
+    default:
+        disparoMedicion = false;
+        break;
     }
 }
 
@@ -669,21 +647,22 @@ void readMPU()
     leerMpu = true; // Comienza la actualizacion de datos del MPU6050
 }
 
-// Funcion callback del pin DRDY para iniciar la lectura del compass
-void leerCompas()
-{
-    leerCompass = true;
-}
-
 // Lectura de los datos del sensor MPU6050
 void leerMPU()
 {
     accX = mpu.getAccX();
     accY = mpu.getAccY();
     accZ = mpu.getAccZ();
-    giroX = mpu.getAngleX();
-    giroY = mpu.getAngleY();
-    giroZ = mpu.getAngleZ();
+    giroX = mpu.getGyroX();
+    giroY = mpu.getGyroY();
+    giroZ = mpu.getGyroZ();
+    mx = mpu.getMagX();
+    my = mpu.getMagY();
+    mz = mpu.getMagZ();
+    miOrientacion = atan2(mx, my) * 180 / 3.14;
+    deltaOrientacion = orientacionADestino - miOrientacion;
+    deltaOrientacion = (deltaOrientacion < (-180)) ? deltaOrientacion + 360 : deltaOrientacion;
+    deltaOrientacion = (deltaOrientacion > 180) ? deltaOrientacion - 360 : deltaOrientacion;
 }
 
 // Lectura de los datos del sensor de GPS
@@ -749,7 +728,7 @@ void escribirArchivo()
 {
     if (tiempoGps >= 70)
         digitalWrite(gpsOn, LOW);
-    else if (iniciarMision)
+    else
         tiempoGps++;
 
     escritura = true;
@@ -788,7 +767,7 @@ bool checkSensorStatus(char device)
     switch (device)
     {
     case 1:
-        return mpu.begin(); // return begin status of MPU6050
+        return mpu.setup(MPUaddress); // return begin status of MPU6050
         break;
     case 2:
         return !aht10.begin(); // return begin status of AHT10
@@ -873,32 +852,43 @@ void servoControl()
 {
     float girDerPor = 0, girIzqPor = 0, coefDist = 0; // 0% - 100%
 
-    if (deltaOrientacion > 0)
-    {
-        girDerPor = map(deltaOrientacion, 0, 180, 5, 100);
+    // if (deltaOrientacion > 0)
+    // {
+    //     girDerPor = map(deltaOrientacion, 0, 180, 5, 100);
+    // }
+    // if (deltaOrientacion < 0)
+    // {
+    //     girIzqPor = map(deltaOrientacion, -180, 0, 100, 5);
+    // }
+
+    // if (deltaOrientacion >= 0 && deltaOrientacion <= 10)
+    // {
+    //     girIzqPor = girIzqPor + (100 - deltaOrientacion * 5);
+    //     girDerPor = girDerPor + (100 - deltaOrientacion * 5);
+    // }
+
+    // if (deltaOrientacion <= 0 && deltaOrientacion >= -10)
+    // {
+    //     girIzqPor = girIzqPor + (100 - deltaOrientacion * -5);
+    //     girDerPor = girDerPor + (100 - deltaOrientacion * -5);
+    // }
+
+    // coefDist = constrain(distanciaADestino / 10, 0, 1);
+
+    // girDerPor *= coefDist;
+    // girIzqPor *= coefDist;
+
+    // servoDer.write(map(constrain(girDerPor, 0, 100), 0, 100, servoDerMinMicros, servoDerMaxMicros));
+    // servoIzq.write(map(constrain(girIzqPor, 0, 100), 0, 100, servoIzqMinMicros, servoIzqMaxMicros));
+    for (int pos = 0; pos <= 180; pos += 1)
+    { // goes from 0 degrees to 180 degrees
+        // in steps of 1 degree
+        servoDer.write(pos); // tell servo to go to position in variable 'pos'
+        servoIzq.write(pos); // tell servo to go to position in variable 'pos'
     }
-    if (deltaOrientacion < 0)
-    {
-        girIzqPor = map(deltaOrientacion, -180, 0, 100, 5);
+    for (int pos = 180; pos >= 0; pos -= 1)
+    {                        // goes from 180 degrees to 0 degrees
+        servoDer.write(pos); // tell servo to go to position in variable 'pos'
+        servoIzq.write(pos); // tell servo to go to position in variable 'pos'
     }
-
-    if (deltaOrientacion >= 0 && deltaOrientacion <= 10)
-    {
-        girIzqPor = girIzqPor + (100 - deltaOrientacion * 5);
-        girDerPor = girDerPor + (100 - deltaOrientacion * 5);
-    }
-
-    if (deltaOrientacion <= 0 && deltaOrientacion >= -10)
-    {
-        girIzqPor = girIzqPor + (100 - deltaOrientacion * -5);
-        girDerPor = girDerPor + (100 - deltaOrientacion * -5);
-    }
-
-    coefDist = constrain(distanciaADestino / 10, 0, 1);
-
-    girDerPor *= coefDist;
-    girIzqPor *= coefDist;
-
-    servoDer.write(map(constrain(girDerPor, 0, 100), 0, 100, servoDerMinMicros, servoDerMaxMicros));
-    servoIzq.write(map(constrain(girIzqPor, 0, 100), 0, 100, servoIzqMinMicros, servoIzqMaxMicros));
 }
