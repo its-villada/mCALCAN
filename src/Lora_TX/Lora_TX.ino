@@ -1,11 +1,8 @@
-#include <SFE_BMP180.h>
 #include <TinyGPS++.h>
 #include <TinyGPSPlus.h>
 #include <AHTxx.h>
 #include <EEPROM.h>
 #include <LoRa.h>
-#include <MPU6050_light.h>
-#include <SFE_BMP180.h>
 #include <SPI.h>
 #include <STM32TimerInterrupt.h>
 #include <STM32_ISR_Timer.h>
@@ -14,6 +11,7 @@
 #include <Wire.h>
 #include "MPU9250.h"
 #include <Servo.h>
+#include <BMP280_DEV.h>
 
 #define GPS_BAUDRATE 115200L
 #define LORA_FREQUENCY 915000000 // Frecuencia en Hz a la que se quiere transmitir.
@@ -25,8 +23,8 @@
 #define RST PB3                  // Pin Reset del transciver LoRa
 #define IRQ PA4                  // Pin DIO0 del transciver LoRa
 #define NSS PA15                 // Pin CS del transciver LoRa
-#define INTpin PA3               // Pin de interrupcion del MPU6050
-#define DRDY PA11                // Pin de interrupcion del GY-273
+#define INTMPU PA3               // Pin de interrupcion del MPU6050
+#define gpsOn PA11               // Pin de activacion del GPS
 #define BAT0 PA0                 // Pin de tension de bateria 1
 #define BAT1 PA1                 // Pin de tension de bateria 2
 #define MainS PA12               // Pin Sensors enable
@@ -34,9 +32,8 @@
 #define buzzer PA8               // Pin del buzzer de recuperacion
 #define servoDerPin PB1          // Pin del servo derecha
 #define servoIzqPin PB0          // Pin del servo izquierda
-#define gpsOn PB8                // Pin de activacion del GPS
 #define HW_TIMER_INTERVAL_MS 1
-#define TIMER_INTERVAL_1 8L  // Intervalo1 salta cada 8 ms
+#define TIMER_INTERVAL_1 6L   // Intervalo1 salta cada 6 ms
 #define TIMER_INTERVAL_2 500L // Intervalo2 salta cada 500 ms
 #define TIMER_INTERVAL_3 50L  // Intervalo3 salta cada 50 ms
 #define servoDerMaxMicros 400
@@ -53,22 +50,22 @@
 #define memLong 4
 #define memReset 5
 #define memTiempo 6
-#define memBaseline 7
 #define MPUaddress 0x68
+#define altitudMar 429
 
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
 STM32_ISR_Timer ISR_Timer1_Temp;
-SFE_BMP180 pressure;
 MPU9250 mpu;
 AHTxx aht10(AHTXX_ADDRESS_X38, AHT1x_SENSOR); // sensor address, sensor type
 TinyGPSPlus tGPS;
+BMP280_DEV bmp280;
 Servo servoDer;
 Servo servoIzq;
 
-float giroX, giroY, giroZ, accX, accY, accZ, ahtValue, miOrientacion = 0, baseline, mx, my, mz, altitud, altitudMax = 0;
-double T = 0, P = 0, tAnterior = 0, pAnterior = 0, latitud, longitud;
-bool busqueda = false, finalizarMision = false, gpsDRDY = false, transmit = false, sensors = false, actualizarMpu = false, leerMpu = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, leerCompass = false, actualizarCompass = false, iniciarMision = false;
+float T = 0, P = 0, giroX, giroY, giroZ, accX, accY, accZ, ahtValue, miOrientacion = 0, mx, my, mz, altitud, altitudMax = 0;
+double tAnterior = 0, pAnterior = 0, latitud, longitud;
+bool pressureDRDY = false, busqueda = false, finalizarMision = false, gpsDRDY = false, transmit = false, sensors = false, actualizarMpu = false, leerMpu = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, iniciarMision = false;
 uint8_t disparoMedicion = 0, cicloAht = 0, preparacion = 0, tiempoGps = 0;
 uint16_t MQ135, batteryLevel1, batteryLevel2, deltaOrientacion, distanciaADestino, orientacionADestino, readAht = 0;
 uint32_t humidity, tiempoMision;
@@ -107,7 +104,6 @@ void song(int);
 void setup()
 {
     // put your setup code here, to run once:
-    Wire.begin();
     // EEPROM.begin();
     pinMode(LED_BUILTIN, OUTPUT); // FUNCIONA EN LOGICA INVERSA!
     pinMode(MainS, OUTPUT);
@@ -115,8 +111,7 @@ void setup()
     pinMode(buzzer, OUTPUT_OPEN_DRAIN); // FUNCIONA EN LOGICA INVERSA!
     pinMode(BAT0, INPUT);
     pinMode(BAT1, INPUT);
-    pinMode(INTpin, INPUT);
-    pinMode(DRDY, INPUT);
+    pinMode(INTMPU, INPUT);
     pinMode(AQS, INPUT);
     digitalWrite(LED_BUILTIN, HIGH);
     digitalWrite(MainS, LOW);
@@ -133,7 +128,7 @@ void setup()
 
     timerSetup(); // Setup de interrupciones de timer
 
-    attachInterrupt(digitalPinToInterrupt(INTpin), readMPU, FALLING);
+    attachInterrupt(digitalPinToInterrupt(INTMPU), readMPU, FALLING);
 }
 
 void loop()
@@ -145,7 +140,6 @@ void loop()
         //     cansatStartUp();
         //     tiempoMision = EEPROM.read(memTiempo);
         //     descenso = EEPROM.read(memDesc);
-        //     baseline = EEPROM.read(memBaseline);
         //     iniciarMision = EEPROM.read(memMision);
         //     latitudAterrizaje = EEPROM.read(memLat);
         //     longitudAterrizaje = EEPROM.read(memLong);
@@ -169,6 +163,19 @@ void loop()
             {
 
                 leerGPS();
+
+                if (pressureDRDY)
+                {
+                    altitud = altitud - altitudMar;
+                    if (altitud >= altitudMax)
+                        altitudMax = altitud;
+
+                    if (altitud <= 10 && altitudMax >= 50)
+                    {
+                        finalizarMision = true;
+                    }
+                    pressureDRDY = false;
+                }
 
                 if (cicloAht == 1)
                     beginMeasurementAht();
@@ -264,12 +271,14 @@ void cansatStartUp()
 {
     digitalWrite(MainS, HIGH);
     digitalWrite(gpsOn, LOW);
-    delay(100);
-    mpuSetup();
+
+    Wire.begin();
+    delay(2000);
+    bmpSetup();
     delay(100);
     aht10Setup();
     delay(100);
-    bmpSetup();
+    mpuSetup();
     delay(100);
     sdCardSetup();
     delay(100);
@@ -312,37 +321,20 @@ void mpuSetup()
 {
     errorCheck(1);
 
-    reportar("Accel Gyro calibration will start in 5sec.");
-    reportar("Please leave the device still on the flat plane.");
-    mpu.verbose(true);
-    delay(5000);
-    mpu.calibrateAccelGyro();
+    // reportar("Please leave the device still on a flat plane.");
+    // mpu.verbose(true);
+    // delay(5000);
+    // mpu.calibrateAccelGyro();
 
-    reportar("Mag calibration will start in 5sec.");
-    reportar("Please Wave device in a figure eight until done.");
-    delay(5000);
-    mpu.calibrateMag();
+    // reportar("Please Wave device in a figure eight until done.");
+    // delay(5000);
+    // mpu.calibrateMag();
 
-    reportar("Calibration Complete");
-
-    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
-    Wire.write(0x38);                   // Registro de interrupciones
-    Wire.write(0x81);                   // Se activa interrupcion de datos y de caida libre
-    Wire.endTransmission();
-
-    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
-    Wire.write(0x1D);                   // Registro de free fall threshold
-    Wire.write(17);
-    Wire.endTransmission();
-
-    Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
-    Wire.write(0x1E);                   // Registro de free fall duration
-    Wire.write(0x2);
-    Wire.endTransmission();
+    // reportar("Calibration Complete");
 
     Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
     Wire.write(0x37);                   // Registro configuracion del pin int
-    Wire.write(0xB0);
+    Wire.write(0xB2);
     Wire.endTransmission();
 
     reportar("MPU inicializado");
@@ -353,18 +345,14 @@ void mpuSetup()
 // Inicializacion del BMP280
 void bmpSetup()
 {
-    char status;
     errorCheck(3);
-    status = pressure.startTemperature();
-    delay(status);
-    pressure.getTemperature(T);
+    bmp280.setTimeStandby(TIME_STANDBY_250MS);
+    bmp280.startNormalConversion();
+    bmp280.setPresOversampling(OVERSAMPLING_X4); // Set the pressure oversampling to X4
+    bmp280.setTempOversampling(OVERSAMPLING_X1); // Set the temperature oversampling to X1
+    bmp280.getTempPres(T, P);
     tAnterior = T;
-    status = pressure.startPressure(3);
-    delay(status);
-    status = pressure.getPressure(P, T);
     pAnterior = P;
-    baseline = P;
-    EEPROM.update(memBaseline, baseline);
     reportar("BMP inicializado");
 }
 
@@ -505,6 +493,7 @@ void onReceive(int packetSize)
                 break;
 
             case 26:
+                finalizarMision = true;
                 busqueda = true;
                 break;
 
@@ -560,7 +549,7 @@ void onReceive(int packetSize)
         }
         if (wipeEeprom)
         {
-            // for (int i = 0; i < (memBaseline + 1); i++)
+            // for (int i = 0; i < (memTiempo + 1); i++)
             //     EEPROM.put(i, false);
             wipeEeprom = false;
         }
@@ -595,48 +584,20 @@ void readSensors()
     switch (disparoMedicion)
     {
     case 0:
-        if (!leerCompass)
-            actualizarCompass = true;
-        pressure.startTemperature();
-        batteryLevel1 = analogRead(BAT0);
+        batteryLevel1 = (analogRead(BAT0) * 1.2);
+        MQ135 = analogRead(AQS);
+        batteryLevel2 = (analogRead(BAT1) * 1.2);
         disparoMedicion++;
         break;
 
     case 1:
-        pressure.getTemperature(T);
-        if (abs(T - tAnterior) >= 3)
-            T = tAnterior;
-        disparoMedicion++;
-        break;
-
-    case 2:
-        MQ135 = analogRead(AQS);
-        batteryLevel2 = analogRead(BAT1);
-        pressure.startPressure(1);
-        disparoMedicion++;
-        break;
-
-    case 3:
-        pressure.getPressure(P, T);
-        if (abs(P - pAnterior) >= 2)
-            P = pAnterior;
-        pAnterior = P;
-        pressure.altitude(P, baseline);
-        if (altitud >= altitudMax)
-            altitudMax = altitud;
-        if (altitud >= 10)
-            altitud = altitud - 10;
-        if (altitud <= 0)
-            altitud = 0;
-        if (altitud <= 10 && altitudMax >= 50)
-        {
-            finalizarMision = true;
-        }
-        disparoMedicion++;
+        bmp280.getCurrentMeasurements(T, P, altitud);
+        pressureDRDY = true;
+        disparoMedicion = 0;
         break;
 
     default:
-        disparoMedicion = false;
+        disparoMedicion = 0;
         break;
     }
 }
@@ -653,6 +614,10 @@ void leerMPU()
     accX = mpu.getAccX();
     accY = mpu.getAccY();
     accZ = mpu.getAccZ();
+    if (accX >= 3 || accY >= 3 || accZ >= 3)
+        digitalWrite(gpsOn, HIGH);
+    else
+        digitalWrite(gpsOn, LOW);
     giroX = mpu.getGyroX();
     giroY = mpu.getGyroY();
     giroZ = mpu.getGyroZ();
@@ -692,6 +657,7 @@ void leerGPS()
     }
 }
 
+// Ceba el AHT para que comienze una medicion y despues leer los datos recuperados
 void beginMeasurementAht()
 {
     Wire.beginTransmission(0x38);
@@ -767,15 +733,13 @@ bool checkSensorStatus(char device)
     switch (device)
     {
     case 1:
-        return mpu.setup(MPUaddress); // return begin status of MPU6050
+        return !mpu.setup(MPUaddress); // return begin status of MPU6050
         break;
     case 2:
         return !aht10.begin(); // return begin status of AHT10
         break;
     case 3:
-        return !pressure.begin(); // return begin status of bmp
-        break;
-    case 4:
+        return !bmp280.begin(BMP280_I2C_ALT_ADDR); // return begin status of bmp
         break;
     }
 }
