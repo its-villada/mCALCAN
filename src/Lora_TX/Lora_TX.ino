@@ -116,7 +116,7 @@ void setup()
     digitalWrite(LED_BUILTIN, HIGH);
     digitalWrite(MainS, LOW);
     digitalWrite(buzzer, HIGH);
-    digitalWrite(gpsOn, HIGH);
+    digitalWrite(gpsOn, LOW);
 
     loraSetup(); // Setup modulo lora
 
@@ -167,13 +167,15 @@ void loop()
                 if (pressureDRDY)
                 {
                     altitud = altitud - altitudMar;
+                    if (altitud <= 0)
+                        altitud = 0;
+
                     if (altitud >= altitudMax)
                         altitudMax = altitud;
 
                     if (altitud <= 10 && altitudMax >= 50)
-                    {
                         finalizarMision = true;
-                    }
+
                     pressureDRDY = false;
                 }
 
@@ -284,7 +286,7 @@ void cansatStartUp()
     delay(100);
     GPSSetup();
     delay(100);
-    // servoSetup();
+    servoSetup();
 }
 
 // Inicializacion del Timer
@@ -816,43 +818,32 @@ void servoControl()
 {
     float girDerPor = 0, girIzqPor = 0, coefDist = 0; // 0% - 100%
 
-    // if (deltaOrientacion > 0)
-    // {
-    //     girDerPor = map(deltaOrientacion, 0, 180, 5, 100);
-    // }
-    // if (deltaOrientacion < 0)
-    // {
-    //     girIzqPor = map(deltaOrientacion, -180, 0, 100, 5);
-    // }
-
-    // if (deltaOrientacion >= 0 && deltaOrientacion <= 10)
-    // {
-    //     girIzqPor = girIzqPor + (100 - deltaOrientacion * 5);
-    //     girDerPor = girDerPor + (100 - deltaOrientacion * 5);
-    // }
-
-    // if (deltaOrientacion <= 0 && deltaOrientacion >= -10)
-    // {
-    //     girIzqPor = girIzqPor + (100 - deltaOrientacion * -5);
-    //     girDerPor = girDerPor + (100 - deltaOrientacion * -5);
-    // }
-
-    // coefDist = constrain(distanciaADestino / 10, 0, 1);
-
-    // girDerPor *= coefDist;
-    // girIzqPor *= coefDist;
-
-    // servoDer.write(map(constrain(girDerPor, 0, 100), 0, 100, servoDerMinMicros, servoDerMaxMicros));
-    // servoIzq.write(map(constrain(girIzqPor, 0, 100), 0, 100, servoIzqMinMicros, servoIzqMaxMicros));
-    for (int pos = 0; pos <= 180; pos += 1)
-    { // goes from 0 degrees to 180 degrees
-        // in steps of 1 degree
-        servoDer.write(pos); // tell servo to go to position in variable 'pos'
-        servoIzq.write(pos); // tell servo to go to position in variable 'pos'
+    if (deltaOrientacion > 0)
+    {
+        girDerPor = map(deltaOrientacion, 0, 180, 5, 100);
     }
-    for (int pos = 180; pos >= 0; pos -= 1)
-    {                        // goes from 180 degrees to 0 degrees
-        servoDer.write(pos); // tell servo to go to position in variable 'pos'
-        servoIzq.write(pos); // tell servo to go to position in variable 'pos'
+    if (deltaOrientacion < 0)
+    {
+        girIzqPor = map(deltaOrientacion, -180, 0, 100, 5);
     }
+
+    if (deltaOrientacion >= 0 && deltaOrientacion <= 10)
+    {
+        girIzqPor = girIzqPor + (100 - deltaOrientacion * 5);
+        girDerPor = girDerPor + (100 - deltaOrientacion * 5);
+    }
+
+    if (deltaOrientacion <= 0 && deltaOrientacion >= -10)
+    {
+        girIzqPor = girIzqPor + (100 - deltaOrientacion * -5);
+        girDerPor = girDerPor + (100 - deltaOrientacion * -5);
+    }
+
+    coefDist = constrain(distanciaADestino / 10, 0, 1);
+
+    girDerPor *= coefDist;
+    girIzqPor *= coefDist;
+
+    servoDer.write(map(constrain(girDerPor, 0, 100), 0, 100, servoDerMinMicros, servoDerMaxMicros));
+    servoIzq.write(map(constrain(girIzqPor, 0, 100), 0, 100, servoIzqMinMicros, servoIzqMaxMicros));
 }
