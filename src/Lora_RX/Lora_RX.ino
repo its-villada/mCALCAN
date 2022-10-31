@@ -7,10 +7,7 @@ Placa: Adafruit LoRa 32u4
 #include <SPI.h>
 #include <LoRa.h>
 #include <string.h>
-#include <SFE_BMP180.h>
 #include <EEPROM.h>
-
-SFE_BMP180 pressure;
 
 // Defino los pines a ser usados por el modulo transceptor LoRa
 #define CS 8                 // Pin de CS del módulo LoRa
@@ -31,11 +28,9 @@ SFE_BMP180 pressure;
 
 #define intervalo 1500
 
-float presionBase;
-double altitud;
-bool responder = false, inicializacion = false, error = false, cansatReset = false, telemetria = false, serial = false, altitudAnterior = 0, altitudMax = 0;
+bool responder = false, error = false, cansatReset = false, telemetria = false, serial = false;
 uint8_t comandoFracasado;
-String LoRaData, presion, data = "", recepcionSerial, latencia, sAltitud;
+String LoRaData, presion, data = "", recepcionSerial, latencia;
 
 void (*resetFunc)(void) = 0;
 void LoRa_Transmit(uint8_t, uint8_t, String);
@@ -144,10 +139,6 @@ void onReceive(int packetSize)
             resetFunc(); // El mensaje recibido es para resetear el sistema
             break;
 
-        case 10:
-            inicializacion = true; // El mensaje recibido es para inicializar un dato
-            break;
-
         case 14:
             telemetria = true;
             break;
@@ -158,27 +149,6 @@ void onReceive(int packetSize)
 
         default:
             break;
-        }
-
-        // Se obtiene la presion base y queda guardada
-        if (inicializacion)
-        {
-            int indicadorP = LoRaData.indexOf(',', codigo2 + 1);
-            presion = LoRaData.substring(codigo2 + 1, indicadorP);
-            presionBase = presion.toFloat();
-            if (presionBase <= 500)
-            {
-                Serial.println("Error obteniendo la presion Base");
-                inicializacion = false;
-            }
-            else
-            {
-                Serial.println("Presion Base:" + presion);
-                Serial.println(presionBase);
-                EEPROM.put(0, presionBase);
-                responder = true;
-                inicializacion = false;
-            }
         }
 
         // Recepcion de telemetria raw
@@ -200,6 +170,7 @@ void onReceive(int packetSize)
             int indicador14 = LoRaData.indexOf(',', indicador13 + 1);
             int indicador15 = LoRaData.indexOf(',', indicador14 + 1);
             int indicador16 = LoRaData.indexOf(',', indicador15 + 1);
+            int indicador17 = LoRaData.indexOf(',', indicador16 + 1);
 
             String temperatura = LoRaData.substring(codigo2 + 1, indicador1);
 
@@ -229,30 +200,12 @@ void onReceive(int packetSize)
 
             String bat2 = LoRaData.substring(indicador15 + 1, indicador16);
 
-            if (presionBase <= 500)
-            {
-                EEPROM.get(0, presionBase);
-                Serial.print("Presion base:");
-                Serial.println(presionBase);
-            }
+            String altitud = LoRaData.substring(indicador16 + 1, indicador17);
 
             calidadDeAire = calidadDeAire.toInt() - 355;
 
-            if (presion.toDouble() >= 700)
-                altitud = pressure.altitude(presion.toDouble(), presionBase);
-
-            if (altitud >= altitudAnterior)
-                altitudMax = altitud;
-            if (altitud >= 10)
-                sAltitud = altitud - 10;
-            if (altitud <= 0)
-                sAltitud = "0.00";
-            if (altitud <= 5 && altitudMax >= 300)
-                LoRa_Transmit(1, 28, "");
 
             // Calculo de valores crudos recibidos desde el satelite
-
-            sAltitud = String(altitud, 2);
 
             bat = ((bat.toInt() * 3.7) / 1023);
 
@@ -263,9 +216,8 @@ void onReceive(int packetSize)
             vel3 = vel3.toDouble() * 9.8066;
 
             // Printeo de los datos recibidos
-            Serial.println("gvie,1,14," + tiempo + "," + sAltitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + bat2);
+            Serial.println("gvie,1,14," + tiempo + "," + altitud + "," + caidaLibre + "," + temperatura + "," + presion + "," + giro1 + "," + giro2 + "," + giro3 + "," + vel1 + "," + vel2 + "," + vel3 + "," + humedad + "," + calidadDeAire + "," + latitud + "," + longitud + "," + bat + "," + bat2);
             telemetria = false;
-            altitudAnterior = altitud;
         }
         // Se responde a algun mensaje
         if (responder)
