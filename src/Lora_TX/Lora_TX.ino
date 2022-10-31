@@ -51,7 +51,6 @@
 #define memReset 5
 #define memTiempo 6
 #define MPUaddress 0x68
-#define altitudMar 429
 
 File csvTelemetry;
 STM32Timer Timer1(TIM1);
@@ -63,6 +62,7 @@ BMP280_DEV bmp280;
 Servo servoDer;
 Servo servoIzq;
 
+const float altitudMar = 326;
 float T = 0, P = 0, giroX, giroY, giroZ, accX, accY, accZ, ahtValue, miOrientacion = 0, mx, my, mz, altitud, altitudMax = 0;
 double tAnterior = 0, pAnterior = 0, latitud, longitud;
 bool pressureDRDY = false, busqueda = false, finalizarMision = false, gpsDRDY = false, transmit = false, sensors = false, actualizarMpu = false, leerMpu = false, responder = false, haRespondido = false, noPudoProcesar = false, escribirDatos = false, ejecutarAccion = false, inicializacion = false, inicializado = false, enviarDevuelta = true, escritura = false, coordenadas = false, listoParaDespegar = false, descenso = false, wipeEeprom = false, iniciarMision = false;
@@ -70,6 +70,7 @@ uint8_t disparoMedicion = 0, cicloAht = 0, preparacion = 0, tiempoGps = 0;
 uint16_t MQ135, batteryLevel1, batteryLevel2, deltaOrientacion, distanciaADestino, orientacionADestino, readAht = 0;
 uint32_t humidity, tiempoMision;
 String latitudAterrizaje, longitudAterrizaje;
+
 
 void cansatStartUp();
 void Timer1Handler();
@@ -165,16 +166,23 @@ void loop()
                 leerGPS();
 
                 if (pressureDRDY)
-                {
-                    altitud = altitud - altitudMar;
+                {   
+                    
+                    //altitud = altitud - altitudMar;
                     if (altitud <= 0)
                         altitud = 0;
 
                     if (altitud >= altitudMax)
                         altitudMax = altitud;
 
-                    if (altitud <= 10 && altitudMax >= 50)
-                        finalizarMision = true;
+                    /*if (altitud <= 10 && altitudMax >= 50)
+                      finalizarMision = true; */
+
+                    if(altitud < altitudMax-10){
+                      descenso = true;
+                     // EEPROM.update(memDesc, true);
+                    }
+                    
 
                     pressureDRDY = false;
                 }
@@ -221,14 +229,14 @@ void loop()
                     if (data == 0x81)
                     {
                         leerMPU();
-                        descenso = true;
+                        //descenso = true;
                         // EEPROM.update(memDesc, true);
                     }
                     else if (data == 0x01)
                         leerMPU();
                     else if (data == 0x80)
                     {
-                        descenso = true;
+                        //descenso = true;
                         // EEPROM.update(memDesc, true);
                     }
                     actualizarMpu = true;
@@ -241,7 +249,7 @@ void loop()
                     {
                         if (!transmit)
                         {
-                            csvTelemetry.println(String(String(millis() - tiempoMision) + comma + String(altitud) + comma + String(descenso) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(giroZ) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel1)));
+                            csvTelemetry.println(String(String(millis() - tiempoMision) + comma + String(altitud) + comma + String(descenso) + comma + String(T) + comma + String(P) + comma + String(giroX) + comma + String(giroY) + comma + String(miOrientacion) + comma + String(accX) + comma + String(accY) + comma + String(accZ) + comma + String(ahtValue) + comma + String(MQ135) + comma + latitud + comma + longitud + comma + String(batteryLevel1)));
                             csvTelemetry.flush();
                         }
                     }
@@ -323,16 +331,16 @@ void mpuSetup()
 {
     errorCheck(1);
 
-    // reportar("Please leave the device still on a flat plane.");
-    // mpu.verbose(true);
-    // delay(5000);
-    // mpu.calibrateAccelGyro();
+   reportar("Please leave the device still on a flat plane.");
+    //mpu.verbose(true);
+    //delay(5000);
+    mpu.calibrateAccelGyro();
 
-    // reportar("Please Wave device in a figure eight until done.");
-    // delay(5000);
-    // mpu.calibrateMag();
+    reportar("Please Wave device in a figure eight until done.");
+    //delay(5000);
+    mpu.calibrateMag();
 
-    // reportar("Calibration Complete");
+     reportar("Calibration Complete");
 
     Wire.beginTransmission(MPUaddress); // Se le escribe datos al mpu9250
     Wire.write(0x37);                   // Registro configuracion del pin int
@@ -626,7 +634,10 @@ void leerMPU()
     mx = mpu.getMagX();
     my = mpu.getMagY();
     mz = mpu.getMagZ();
-    miOrientacion = atan2(mx, my) * 180 / 3.14;
+
+    miOrientacion = atan2(my, mx) * RAD_TO_DEG;
+    miOrientacion < 0 ? 360 + miOrientacion : miOrientacion;
+
     deltaOrientacion = orientacionADestino - miOrientacion;
     deltaOrientacion = (deltaOrientacion < (-180)) ? deltaOrientacion + 360 : deltaOrientacion;
     deltaOrientacion = (deltaOrientacion > 180) ? deltaOrientacion - 360 : deltaOrientacion;
